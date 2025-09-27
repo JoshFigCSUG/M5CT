@@ -2,6 +2,7 @@ package com.csugprojects.m5ct.ui.screen
 
 import android.content.Context
 import android.net.Uri
+import androidx.camera.core.AspectRatio // NEW: Import AspectRatio for configuration
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -36,6 +37,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
 import com.csugprojects.m5ct.ui.viewmodel.GalleryViewModel
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -66,9 +68,17 @@ fun CameraScreen(navController: NavHostController, viewModel: GalleryViewModel) 
     // FIX: Uses the correct lifecycle owner from the lifecycle-runtime-compose library
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val cameraExecutor = rememberCameraExecutor()
-    val coroutineScope = rememberCoroutineScope()
+    val coroutineScope = rememberCoroutineScope() // The managed scope to be passed down
 
-    val imageCapture = remember { ImageCapture.Builder().build() }
+    // FIX APPLIED: Add configuration for robust ImageCapture initialization
+    val imageCapture = remember {
+        ImageCapture.Builder()
+            // Guide CameraX to select an output resolution with a common aspect ratio
+            .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+            // Prioritize minimum latency over image quality for responsive capture
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .build()
+    }
     val isCapturing = remember { mutableStateOf(false) }
 
     Scaffold(
@@ -109,9 +119,10 @@ fun CameraScreen(navController: NavHostController, viewModel: GalleryViewModel) 
                     if (!isCapturing.value) {
                         isCapturing.value = true
 
-                        coroutineScope.launch(Dispatchers.IO) {
+                        coroutineScope.launch(Dispatchers.IO) { // 1. Start I/O on background thread
                             try {
-                                val savedUri = takePhotoAndSave(context, cameraExecutor, imageCapture, viewModel)
+                                // FIX APPLIED: Pass the managed coroutineScope to the utility function
+                                val savedUri = takePhotoAndSave(context, cameraExecutor, imageCapture, viewModel, coroutineScope)
 
                                 // FIX APPLIED: Switch to the Main thread before updating the UI and navigating.
                                 withContext(Dispatchers.Main) {
@@ -182,12 +193,14 @@ private fun bindCameraUseCases(
 
 /**
  * Executes photo capture and handles file persistence via the Repository.
+ * FIX: Now accepts a CoroutineScope for managed I/O delegation.
  */
 private suspend fun takePhotoAndSave(
     context: Context,
     cameraExecutor: Executor,
     imageCapture: ImageCapture,
-    viewModel: GalleryViewModel
+    viewModel: GalleryViewModel,
+    parentScope: CoroutineScope // NEW: Accept managed scope
 ): Uri? {
     val photoFile = File(
         context.cacheDir,
@@ -207,9 +220,9 @@ private suspend fun takePhotoAndSave(
             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                 val displayName = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
 
-                // CRITICAL FIX: Launch a new coroutine on the I/O thread to safely execute the suspend function.
-                // This resolves the Main Thread crash when calling the suspending repository function.
-                kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                // FIX APPLIED: Use the managed parentScope to launch the I/O task,
+                // ensuring the operation is lifecycle-aware and prevents silent failures.
+                parentScope.launch(Dispatchers.IO) {
                     try {
                         // 1. Delegate persistence (M3/M5 I/O)
                         val savedUri = viewModel.repository.saveCapturedPhoto(photoFile, displayName)
