@@ -1,37 +1,24 @@
 package com.csugprojects.m5ct
 
-import android.Manifest
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.csugprojects.m5ct.di.GalleryViewModelFactory
 import com.csugprojects.m5ct.data.repository.ImageRepository
 import com.csugprojects.m5ct.data.local.MediaStoreDataSource
 import com.csugprojects.m5ct.data.remote.UnsplashApiService
 import com.csugprojects.m5ct.data.remote.UnsplashApi
-import com.csugprojects.m5ct.ui.viewmodel.GalleryViewModel
-import com.csugprojects.m5ct.navigation.AppNavigation
+// REMOVED: Incomplete Permission logic imports (Manifest, ExperimentalPermissionsApi, etc.)
 import com.csugprojects.m5ct.ui.theme.M5CTTheme
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.rememberMultiplePermissionsState
+// NEW: Import the correct PermissionHandler from the component package
+import com.csugprojects.m5ct.ui.component.PermissionHandler
 
 // =========================================================================
-// 1. DEPENDENCY SETUP & PERMISSIONS
+// 1. DEPENDENCY SETUP
 // =========================================================================
 
-// M5: Defines the list of mandatory permissions for CameraX
-private val REQUIRED_PERMISSIONS = listOfNotNull(
-    Manifest.permission.CAMERA // FIX: ONLY Camera permission is requested at launch.
-)
+// REMOVED: private val REQUIRED_PERMISSIONS = listOfNotNull(Manifest.permission.CAMERA)
 
 class MainActivity : ComponentActivity() {
 
@@ -59,58 +46,4 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// =========================================================================
-// 2. PERMISSION HANDLER (Root View/Controller)
-// =========================================================================
-
-/**
- * Handles runtime permission requests and conditionally launches the main app navigation.
- */
-@OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
-@Composable
-fun PermissionHandler(viewModelFactory: ViewModelProvider.Factory) {
-    // M5: Use Accompanist to manage and observe the permission state
-    val permissionState = rememberMultiplePermissionsState(
-        permissions = REQUIRED_PERMISSIONS
-    )
-
-    // Instantiate ViewModel using the provided Factory (MVVM Injection)
-    val viewModel: GalleryViewModel = viewModel(factory = viewModelFactory)
-
-    val allGranted = permissionState.allPermissionsGranted
-
-    // LAUNCHED EFFECT REMOVED: Redundant as navigation is handled by the if statement below.
-
-    if (allGranted) {
-        // If granted (only Camera needed now), proceed to the main navigation graph
-        AppNavigation(viewModel)
-    } else {
-        // Graceful fallback/explanation UI using M3 components
-        Scaffold(
-            topBar = { TopAppBar(title = { Text("Permissions Required") }) },
-            modifier = Modifier.fillMaxSize()
-        ) { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text(
-                    "This gallery requires Camera access to take photos. Grant access to continue. Local images are accessed via the Photo Picker.",
-                    style = MaterialTheme.typography.titleMedium,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(Modifier.height(32.dp))
-                Button(
-                    onClick = { permissionState.launchMultiplePermissionRequest() },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Text("Grant Camera Permission", color = MaterialTheme.colorScheme.onPrimary)
-                }
-            }
-        }
-    }
-}
+// REMOVED: The entire PermissionHandler @Composable function below was removed.

@@ -29,7 +29,12 @@ val REQUIRED_PERMISSIONS = listOfNotNull(
         Manifest.permission.READ_MEDIA_IMAGES
     } else {
         Manifest.permission.READ_EXTERNAL_STORAGE
-    }
+    },
+
+    // FIX: Add WRITE_EXTERNAL_STORAGE for pre-Q devices (minSdk 24 to 28)
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+        Manifest.permission.WRITE_EXTERNAL_STORAGE
+    } else null
 )
 
 // =========================================================================

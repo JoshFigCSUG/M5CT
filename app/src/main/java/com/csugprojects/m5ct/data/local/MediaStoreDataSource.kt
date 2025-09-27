@@ -28,6 +28,10 @@ class MediaStoreDataSource(private val context: Context) {
     private val appMediaSubfolder = "/MyAppGallery"
     private val appMediaRelativePath = "${Environment.DIRECTORY_PICTURES}${appMediaSubfolder}/"
 
+    // FIX: Define the correct value for RELATIVE_PATH in Scoped Storage (API 29+).
+    // It must only be the subfolder name, e.g., "MyAppGallery"
+    private val scopedRelativePathValue = appMediaSubfolder.trimStart('/').trimEnd('/')
+
     // Columns we want to retrieve from the MediaStore database
     private val projection = arrayOf(
         MediaStore.Images.Media._ID,
@@ -38,7 +42,7 @@ class MediaStoreDataSource(private val context: Context) {
     )
 
     // ====================================================================
-    // 1. READ: Fetching App-Owned Images (FIXED for API < 29)
+    // 1. READ: Fetching App-Owned Images (FIXED for API < 29 and API Q+)
     // ====================================================================
 
     /**
@@ -63,7 +67,8 @@ class MediaStoreDataSource(private val context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             // API 29+ (Q and above): Filter by RELATIVE_PATH
             selection = "${MediaStore.Images.Media.RELATIVE_PATH}=?"
-            selectionArgs = arrayOf(appMediaRelativePath.trimEnd('/'))
+            // FIX APPLIED: Use the correctly trimmed subfolder name for the value.
+            selectionArgs = arrayOf(scopedRelativePathValue)
         } else {
             // FIX: API < 29 (Lollipop to Pie): Filter by DATA path prefix
             val legacyDir = getLegacySaveDir().absolutePath
@@ -132,7 +137,8 @@ class MediaStoreDataSource(private val context: Context) {
         val contentValues = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, appMediaRelativePath.trimEnd('/'))
+            // FIX APPLIED: Use the correctly trimmed subfolder name for RELATIVE_PATH.
+            put(MediaStore.MediaColumns.RELATIVE_PATH, scopedRelativePathValue)
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
 
@@ -235,7 +241,8 @@ class MediaStoreDataSource(private val context: Context) {
             put(MediaStore.Images.Media.SIZE, photoFile.length())
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 // Save CameraX photos to the same app-owned folder (Q+)
-                put(MediaStore.Images.Media.RELATIVE_PATH, appMediaRelativePath.trimEnd('/'))
+                // FIX APPLIED: Use the correctly trimmed subfolder name for RELATIVE_PATH.
+                put(MediaStore.Images.Media.RELATIVE_PATH, scopedRelativePathValue)
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             } else {
                 // FIX: Legacy: Use the absolute path of the *final* file
