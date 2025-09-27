@@ -7,12 +7,12 @@ plugins {
 
 android {
     namespace = "com.csugprojects.m5ct"
-    compileSdk = 36
+    compileSdk = 36 // Already set to 36
 
     defaultConfig {
         applicationId = "com.csugprojects.m5ct"
         minSdk = 24
-        targetSdk = 36
+        targetSdk = 36 // Already set to 36
         versionCode = 1
         versionName = "1.0"
 
@@ -28,13 +28,16 @@ android {
             )
         }
     }
+
+    // CRITICAL FIX: Update to Java 17 for API 36 compatibility
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17 // Updated from 11
+        targetCompatibility = JavaVersion.VERSION_17 // Updated from 11
     }
     kotlinOptions {
-        jvmTarget = "11"
+        jvmTarget = "17" // Updated from 11
     }
+
     buildFeatures {
         compose = true
     }
@@ -50,6 +53,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+
     implementation(libs.androidx.compose.material.icons.extended)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
@@ -67,6 +71,7 @@ dependencies {
     // The following line is optional, as the core library is included indirectly by camera-camera2
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
+    //
     // If you want to additionally use the CameraX Lifecycle library
     implementation(libs.androidx.camera.lifecycle)
     // If you want to additionally use the CameraX VideoCapture library
@@ -79,6 +84,7 @@ dependencies {
     implementation(libs.androidx.camera.extensions)
 
     // M4: Networking (Retrofit and Serialization for Unsplash API)
+
     // Updated to use the modern libs convention for cleaner version management
     implementation(libs.retrofit) // Core Retrofit library (Alias assumed: retrofit.core)
     implementation(libs.retrofit2.kotlinx.serialization.converter) // Converter
