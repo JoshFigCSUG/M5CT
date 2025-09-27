@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream // New import for legacy file writing
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -25,13 +26,15 @@ class MediaStoreDataSource(private val context: Context) {
 
     // Define the specific sub-folder where all app-owned media will live
     private val appMediaSubfolder = "/MyAppGallery"
+    private val appMediaRelativePath = "${Environment.DIRECTORY_PICTURES}${appMediaSubfolder}/"
 
     // Columns we want to retrieve from the MediaStore database
     private val projection = arrayOf(
         MediaStore.Images.Media._ID,
         MediaStore.Images.Media.DISPLAY_NAME,
         MediaStore.Images.Media.DATE_TAKEN,
-        MediaStore.MediaColumns.RELATIVE_PATH // Essential for filtering owned files (API 29+)
+        MediaStore.MediaColumns.RELATIVE_PATH, // Essential for filtering owned files (API 29+)
+        MediaStore.MediaColumns.DATA // Essential for filtering owned files (API < 29)
     )
 
     // ====================================================================
@@ -53,15 +56,26 @@ class MediaStoreDataSource(private val context: Context) {
 
         val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC"
 
-        // FIX: Only query files that are known to be in our specific folder path
-        val selection = "${MediaStore.Images.Media.RELATIVE_PATH}=?"
-        val selectionArgs = arrayOf("Pictures/MyAppGallery/")
+        // FIX: Update selection logic to support both Scoped Storage (Q+) and legacy paths (< Q)
+        val selection: String?
+        val selectionArgs: Array<String>?
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // API 29+ (Q and above): Filter by RELATIVE_PATH
+            selection = "${MediaStore.Images.Media.RELATIVE_PATH}=?"
+            selectionArgs = arrayOf(appMediaRelativePath)
+        } else {
+            // API < 29 (Lollipop to Pie): Filter by DATA path prefix
+            val legacyDir = getLegacySaveDir().absolutePath
+            selection = "${MediaStore.Images.Media.DATA} LIKE ?"
+            selectionArgs = arrayOf("${legacyDir}${File.separator}%")
+        }
 
 
         context.contentResolver.query(
             collection,
             projection,
-            selection, // Filter by our specific sub-folder
+            selection, // Filter by our specific sub-folder/path
             selectionArgs,
             sortOrder
         )?.use { cursor ->
@@ -92,11 +106,24 @@ class MediaStoreDataSource(private val context: Context) {
     // ====================================================================
 
     /**
-     * Reads data from the Photo Picker source URI and saves it as a new, app-owned file
-     * indexed in MediaStore (Option 2).
+     * NEW: Delegates to the correct save logic based on the API level.
+     */
+    suspend fun copyPhotoToAppStorage(context: Context, sourceUri: Uri): Uri? = withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Option 1: Scoped Storage (Q+)
+            return@withContext copyPhotoToAppStorageQPlus(context, sourceUri)
+        } else {
+            // Option 2: Legacy File Path (< Q)
+            return@withContext copyPhotoToAppStorageLegacy(context, sourceUri)
+        }
+    }
+
+    /**
+     * [API Q+] Reads data from the Photo Picker source URI and saves it as a new, app-owned file
+     * indexed in MediaStore using Scoped Storage features (RELATIVE_PATH, IS_PENDING).
      */
     @RequiresApi(Build.VERSION_CODES.Q)
-    suspend fun copyPhotoToAppStorage(context: Context, sourceUri: Uri): Uri? = withContext(Dispatchers.IO) {
+    private fun copyPhotoToAppStorageQPlus(context: Context, sourceUri: Uri): Uri? {
         val resolver = context.contentResolver
         val mimeType = resolver.getType(sourceUri) ?: "image/jpeg"
 
@@ -108,13 +135,13 @@ class MediaStoreDataSource(private val context: Context) {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
             // CRITICAL: Set the relative path to our dedicated subfolder
-            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + appMediaSubfolder)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, appMediaRelativePath.trimEnd('/'))
             put(MediaStore.Images.Media.IS_PENDING, 1) // Mark as pending during write
         }
 
         val newUri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), contentValues)
 
-        return@withContext try {
+        return try {
             if (newUri != null) {
                 // 2. Stream data from the Photo Picker source URI to the new file URI
                 resolver.openInputStream(sourceUri)?.use { inputStream ->
@@ -143,8 +170,50 @@ class MediaStoreDataSource(private val context: Context) {
         }
     }
 
+    /**
+     * [API < Q] Reads data from the Photo Picker source URI and saves it using the legacy
+     * file path (DATA column) method.
+     */
+    private fun copyPhotoToAppStorageLegacy(context: Context, sourceUri: Uri): Uri? {
+        val resolver = context.contentResolver
+        val mimeType = resolver.getType(sourceUri) ?: "image/jpeg"
+        val displayName = "IMG_${SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())}.jpg"
+
+        // 1. Get the target directory and file
+        val legacyDir = getLegacySaveDir()
+        val targetFile = File(legacyDir, displayName)
+        val targetFilePath = targetFile.absolutePath
+
+        // 2. Stream data from the Photo Picker source URI to the new local file
+        try {
+            resolver.openInputStream(sourceUri)?.use { inputStream ->
+                FileOutputStream(targetFile).use { outputStream ->
+                    inputStream.copyTo(outputStream)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return null
+        }
+
+        // 3. Insert the new record into MediaStore (using DATA column)
+        val contentValues = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
+            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+            put(MediaStore.MediaColumns.DATA, targetFilePath) // Legacy path
+            put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
+            put(MediaStore.Images.Media.SIZE, targetFile.length())
+        }
+
+        // Use the generic external URI for pre-Q
+        val newUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+
+        return newUri
+    }
+
+
     // ====================================================================
-    // 3. CREATE (CameraX): Saving a new capture file
+    // 3. CREATE (CameraX): Saving a new capture file (Updated for Legacy)
     // ====================================================================
 
     /**
@@ -159,17 +228,25 @@ class MediaStoreDataSource(private val context: Context) {
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         }
 
+        // Determine the permanent file path/object for legacy mode
+        val targetFile: File? = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            val legacyDir = getLegacySaveDir()
+            File(legacyDir, photoFile.name)
+        } else null
+
+
         val contentValues = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
             put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
             put(MediaStore.Images.Media.SIZE, photoFile.length())
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // Save CameraX photos to the same app-owned folder
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + appMediaSubfolder)
+                // Save CameraX photos to the same app-owned folder (Q+)
+                put(MediaStore.Images.Media.RELATIVE_PATH, appMediaRelativePath.trimEnd('/'))
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             } else {
-                put(MediaStore.Images.Media.DATA, photoFile.absolutePath)
+                // Legacy: Use the absolute path to the intended public external storage file
+                put(MediaStore.Images.Media.DATA, targetFile!!.absolutePath)
             }
         }
 
@@ -177,19 +254,26 @@ class MediaStoreDataSource(private val context: Context) {
 
         return@withContext try {
             if (imageUri != null) {
-                resolver.openOutputStream(imageUri)?.use { outputStream ->
-                    FileInputStream(photoFile).use { inputStream ->
-                        inputStream.copyTo(outputStream)
-                    }
-                }
-
+                // 1. Write the content to the final destination
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    // Q+: Write to the Content URI stream
+                    resolver.openOutputStream(imageUri)?.use { outputStream ->
+                        FileInputStream(photoFile).use { inputStream ->
+                            inputStream.copyTo(outputStream)
+                        }
+                    }
+
+                    // Finalize the record
                     contentValues.clear()
                     contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
                     resolver.update(imageUri, contentValues, null, null)
+
+                } else {
+                    // Legacy: Copy the temporary cache file to the permanent target file
+                    photoFile.copyTo(targetFile!!, overwrite = true)
                 }
 
-                // Safely delete the temporary file used by CameraX
+                // 2. Clean up the temporary cache file (for all versions)
                 if (photoFile.exists()) photoFile.delete()
 
                 imageUri
@@ -200,6 +284,7 @@ class MediaStoreDataSource(private val context: Context) {
             e.printStackTrace()
             if (imageUri != null) resolver.delete(imageUri, null, null)
             if (photoFile.exists()) photoFile.delete()
+            targetFile?.delete() // Delete the permanent file if created but registration failed
             null
         }
     }
@@ -214,5 +299,27 @@ class MediaStoreDataSource(private val context: Context) {
     fun deletePhotoFromMediaStore(uri: Uri): Boolean {
         // The ContentResolver returns the number of rows deleted.
         return context.contentResolver.delete(uri, null, null) > 0
+    }
+
+    // ====================================================================
+    // 5. HELPER FUNCTION
+    // ====================================================================
+
+    /**
+     * Helper to get the absolute path to the app's dedicated media folder for API < 29.
+     * Also ensures the directory exists.
+     */
+    private fun getLegacySaveDir(): File {
+        // Use DIRECTORY_PICTURES in the external public storage
+        @Suppress("DEPRECATION")
+        val picDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+        // Use the subfolder name, removing the leading slash
+        val finalDir = File(picDir, appMediaSubfolder.trimStart('/'))
+
+        // Create the directory if it doesn't exist (critical for pre-Q)
+        if (!finalDir.exists()) {
+            finalDir.mkdirs()
+        }
+        return finalDir
     }
 }
