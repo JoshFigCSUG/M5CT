@@ -30,6 +30,8 @@ class GalleryViewModel(
 
     private fun loadImages() {
         viewModelScope.launch {
+            // Collecting the flow ensures the combined list (local + remote) is retrieved.
+            // This is the single source of truth.
             repository.getGalleryItems().collect { combinedList ->
                 _images.value = combinedList
             }
@@ -41,13 +43,13 @@ class GalleryViewModel(
     }
 
     fun handleNewCapturedPhoto(photoUri: Uri) {
-        val newItem = GalleryItem(id = photoUri.toString(), regularUrl = photoUri.toString(), fullUrl = photoUri.toString(), description = "New Capture", isLocal = true)
-        _images.update { currentList -> listOf(newItem) + currentList }
+        // FIX: Replaced manual list update with a full data refresh.
+        // This ensures the ViewModel correctly picks up the new image indexed by MediaStore.
+        loadImages()
     }
 
     /**
      * M3/M5 Policy Compliant Flow: Performs background I/O and returns the results.
-     * FIX: Removed internal withContext(Dispatchers.Main). It now just returns the result.
      */
     suspend fun processAndCopyPickerUris(context: Context, uris: List<Uri>): List<GalleryItem> {
         // This function is already running on Dispatchers.IO from the caller.
@@ -72,10 +74,8 @@ class GalleryViewModel(
      * NOTE: This is called by the View *after* the I/O completes on the Main Thread.
      */
     fun handleNewPhotoPickerUris(newItems: List<GalleryItem>) {
-        // This method must be called from the Main Thread.
-        _images.update { currentList ->
-            newItems + currentList
-        }
+        // FIX: Replaced fragile manual list update with a full data refresh.
+        loadImages()
     }
 
     fun deleteSelectedPhoto() {
@@ -86,7 +86,8 @@ class GalleryViewModel(
                     repository.deletePhoto(photoToDelete.regularUrl.toUri())
                 }
                 if (success) {
-                    _images.update { currentList -> currentList.filter { it.id != photoToDelete.id } }
+                    // FIX: Replaced manual list update with a full data refresh after deletion.
+                    loadImages()
                     _selectedImage.value = null
                 } else {
                     println("Deletion failed for local photo: ${photoToDelete.id}.")

@@ -56,7 +56,7 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
                     // B. CRITICAL FIX: Switch back to the Main Thread for safe state modification
                     withContext(Dispatchers.Main) {
                         // The state update MUST happen here, guaranteeing Main Thread access
-                        viewModel.handleNewPhotoPickerUris(newItems)
+                        viewModel.handleNewPhotoPickerUris(newItems) // This now triggers a full refresh
                     }
                 }
             }
