@@ -31,7 +31,6 @@ class GalleryViewModel(
     private fun loadImages() {
         viewModelScope.launch {
             // Collecting the flow ensures the combined list (local + remote) is retrieved.
-            // This is the single source of truth.
             repository.getGalleryItems().collect { combinedList ->
                 _images.value = combinedList
             }
@@ -42,9 +41,12 @@ class GalleryViewModel(
         _selectedImage.value = item
     }
 
+    /**
+     * FIX: Triggers a full data refresh to sync with MediaStore after capture.
+     */
     fun handleNewCapturedPhoto(photoUri: Uri) {
-        // FIX: Replaced manual list update with a full data refresh.
-        // This ensures the ViewModel correctly picks up the new image indexed by MediaStore.
+        // The newly saved image is now guaranteed to be in the MediaStore,
+        // so we force the ViewModel to re-query the single source of truth.
         loadImages()
     }
 
@@ -52,12 +54,14 @@ class GalleryViewModel(
      * M3/M5 Policy Compliant Flow: Performs background I/O and returns the results.
      */
     suspend fun processAndCopyPickerUris(context: Context, uris: List<Uri>): List<GalleryItem> {
-        // This function is already running on Dispatchers.IO from the caller.
+        // This function runs on Dispatchers.IO.
         val copiedItems = mutableListOf<GalleryItem>()
 
         for (uri in uris) {
+            // This is the I/O call which is now fixed to handle all API levels
             val copiedUri = repository.copyPhotoToAppStorage(context, uri)
 
+            // The data model conversion is still needed here for logical consistency
             copiedUri?.let {
                 copiedItems.add(
                     GalleryItem(id = it.toString(), regularUrl = it.toString(), fullUrl = it.toString(), description = "Imported Photo", isLocal = true)
@@ -65,16 +69,16 @@ class GalleryViewModel(
             }
         }
 
-        // REMOVED: withContext(Dispatchers.Main) { handleNewPhotoPickerUris(copiedItems) }
         return copiedItems // Return results for the View to process on the Main Thread
     }
 
     /**
      * Synchronized method to update the StateFlow with new items.
      * NOTE: This is called by the View *after* the I/O completes on the Main Thread.
+     * FIX: Triggers a full data refresh to sync with MediaStore after copy operation.
      */
     fun handleNewPhotoPickerUris(newItems: List<GalleryItem>) {
-        // FIX: Replaced fragile manual list update with a full data refresh.
+        // The file copy operation is complete, so we force a full refresh.
         loadImages()
     }
 
@@ -86,7 +90,7 @@ class GalleryViewModel(
                     repository.deletePhoto(photoToDelete.regularUrl.toUri())
                 }
                 if (success) {
-                    // FIX: Replaced manual list update with a full data refresh after deletion.
+                    // Triggers a full data refresh after deletion
                     loadImages()
                     _selectedImage.value = null
                 } else {
