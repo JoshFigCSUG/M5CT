@@ -32,27 +32,65 @@ class GalleryViewModel(
     private val _selectedImage = MutableStateFlow<GalleryItem?>(null)
     val selectedImage: StateFlow<GalleryItem?> = _selectedImage.asStateFlow()
 
-    // Defaults to empty string ("") to trigger random photo fetch on startup
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    // StateFlow to trigger the photo picker launch in the UI once
+    private val _launchPickerEvent = MutableStateFlow(false)
+    val launchPickerEvent: StateFlow<Boolean> = _launchPickerEvent.asStateFlow()
+
     init {
-        // CRITICAL: Set up the reactive flow to reload images whenever the search query changes
         _searchQuery
             .debounce(300L)
             .filter { query ->
-                // FIX: Allow search if the query is blank (for random images) OR if the query is long enough.
                 query.isBlank() || query.length > 2
             }
             .onEach { query -> loadImages(query) }
             .launchIn(viewModelScope)
+
+        // Removed the internal initialization check. The event is now triggered externally.
+    }
+
+    /**
+     * NEW: Public function called by a transient screen (like PermissionHandler)
+     * to request the Photo Picker to launch on the next screen if the gallery is currently empty.
+     */
+    fun cuePhotoPickerOnEmptyGallery() {
+        if (_images.value.isEmpty()) {
+            _launchPickerEvent.value = true
+        }
+    }
+
+    /**
+     * Called by the UI after the picker is launched to reset the event flag.
+     */
+    fun onPickerLaunched() {
+        _launchPickerEvent.value = false
     }
 
     // Function to handle fetching both local and remote (search) images
     private fun loadImages(query: String) {
         viewModelScope.launch {
-            repository.getGalleryItems(query).collect { combinedList ->
-                _images.value = combinedList
+            try {
+                _errorMessage.value = null
+
+                repository.getGalleryItems(query).collect { combinedList ->
+                    _images.value = combinedList
+
+                    // Reset the picker flag if we successfully load images
+                    if (combinedList.isNotEmpty()) {
+                        _launchPickerEvent.value = false
+                    }
+                }
+            } catch (e: Exception) {
+                println("Error during image fetch: ${e.message}")
+                _errorMessage.value = "Failed to connect to image service. Check your internet connection or API key."
+                if (_images.value.isEmpty()) {
+                    _images.value = emptyList()
+                }
             }
         }
     }
@@ -61,16 +99,10 @@ class GalleryViewModel(
         _selectedImage.value = item
     }
 
-    /**
-     * Updates the StateFlow for the search query, which automatically triggers a reload.
-     */
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
     }
 
-    /**
-     * Performs background I/O to copy photo picker URIs to permanent app storage.
-     */
     suspend fun processAndCopyPickerUris(context: Context, uris: List<Uri>): List<GalleryItem> {
         val copiedItems = mutableListOf<GalleryItem>()
 
@@ -87,16 +119,10 @@ class GalleryViewModel(
         return copiedItems
     }
 
-    /**
-     * Triggers a full data refresh using the current search term after a CameraX capture.
-     */
     fun handleNewCapturedPhoto(photoUri: Uri) {
         loadImages(_searchQuery.value)
     }
 
-    /**
-     * Triggers a full data refresh using the current search term after a Photo Picker import.
-     */
     fun handleNewPhotoPickerUris(newItems: List<GalleryItem>) {
         loadImages(_searchQuery.value)
     }

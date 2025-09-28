@@ -21,6 +21,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect // NEW
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -48,6 +49,10 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
 
     val images by viewModel.images.collectAsState(initial = emptyList())
     val searchQuery by viewModel.searchQuery.collectAsState()
+    val errorMessage by viewModel.errorMessage.collectAsState()
+
+    // NEW: Observe the event flag from the ViewModel
+    val launchPickerEvent by viewModel.launchPickerEvent.collectAsState()
 
     // State to manage the search bar's active/expanded state
     var isSearchActive by remember { mutableStateOf(false) }
@@ -56,6 +61,9 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 10),
         onResult = { uris ->
+            // Reset the ViewModel flag after the picker returns (whether successful or canceled)
+            viewModel.onPickerLaunched()
+
             if (uris.isNotEmpty()) {
                 coroutineScope.launch(Dispatchers.IO) {
                     val newItems = viewModel.processAndCopyPickerUris(context, uris)
@@ -66,6 +74,25 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
             }
         }
     )
+
+    // NEW: LaunchedEffect to observe the launch flag and trigger the picker once
+    LaunchedEffect(launchPickerEvent) {
+        if (launchPickerEvent) {
+            // Check to ensure images are truly empty before launching (safety measure)
+            if (images.isEmpty()) {
+                photoPickerLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+                // We will rely on the onResult lambda to call viewModel.onPickerLaunched()
+                // OR on the ViewModel's loadImages to reset the flag.
+            } else {
+                // If the flag was true but images loaded anyway (e.g., local cache found something),
+                // ensure the flag is turned off.
+                viewModel.onPickerLaunched()
+            }
+        }
+    }
+
 
     Scaffold(
         topBar = {
@@ -100,20 +127,17 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
                 query = searchQuery,
                 onQueryChange = { viewModel.setSearchQuery(it) },
                 onSearch = {
-                    // When the user hits enter, deactivate the search bar
                     isSearchActive = false
                 },
                 placeholder = { Text("Search Unsplash") },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = {
-                    // The clear button logic now checks for an empty string (for random images)
                     if (searchQuery.isNotEmpty()) {
                         IconButton(onClick = { viewModel.setSearchQuery("") }) {
                             Icon(Icons.Filled.Close, contentDescription = "Clear Search")
                         }
                     }
                 },
-                // Use 'active' and 'onActiveChange' directly for correct state management
                 active = isSearchActive,
                 onActiveChange = { active -> isSearchActive = active },
 
@@ -127,13 +151,16 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
             // Main Content: Lazy Grid
             if (images.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    val message = when {
+                        // 1. Show Network/API Error if present
+                        !errorMessage.isNullOrEmpty() -> errorMessage!!
+                        // 2. Show No Search Results (query is not blank, but images are empty)
+                        searchQuery.isNotBlank() -> "No images found for \"$searchQuery\"."
+                        // 3. Initial/Empty State (Awaiting random images or local load)
+                        else -> "Loading random images or check connectivity."
+                    }
                     Text(
-                        // Updated empty message based on search state
-                        text = if (searchQuery.isEmpty()) {
-                            "Loading random images or check connectivity."
-                        } else {
-                            "No results for: \"$searchQuery\". Try a different search term or check connectivity."
-                        },
+                        text = message,
                         modifier = Modifier.padding(16.dp)
                     )
                 }
@@ -143,7 +170,7 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
                     contentPadding = PaddingValues(4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.fillMaxSize() // Fills the rest of the Column space
+                    modifier = Modifier.fillMaxSize()
                 ) {
                     items(images, key = { it.id }) { item ->
                         GalleryGridItem(item) {

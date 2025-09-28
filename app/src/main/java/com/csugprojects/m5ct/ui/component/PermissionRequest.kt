@@ -20,7 +20,6 @@ import com.google.accompanist.permissions.rememberMultiplePermissionsState
 // 1. Permissions List (Centralized definition)
 // =========================================================================
 
-// M5: Defines the list of mandatory permissions for CameraX and MediaStore
 val REQUIRED_PERMISSIONS = listOfNotNull(
     Manifest.permission.CAMERA,
 
@@ -54,13 +53,11 @@ fun PermissionHandler(viewModelFactory: ViewModelProvider.Factory) {
     val viewModel: GalleryViewModel = viewModel(factory = viewModelFactory)
     val allGranted = permissionState.allPermissionsGranted
 
-    // --- FIX APPLIED: Use LaunchedEffect to handle the state change ---
-    // The effect runs when the permission state changes.
     LaunchedEffect(permissionState.permissions) {
         if (permissionState.allPermissionsGranted) {
-            // If permissions are newly granted, the UI will recompose,
-            // and the 'if (allGranted)' block below will execute AppNavigation.
-            println("Permissions granted. Launching navigation.")
+            println("Permissions granted. Cueing photo picker event.")
+            // NEW: Call the ViewModel function to set the flag for the next screen
+            viewModel.cuePhotoPickerOnEmptyGallery()
         }
     }
 
@@ -99,7 +96,6 @@ private fun PermissionRationaleUI(permissionState: com.google.accompanist.permis
             )
             Spacer(Modifier.height(32.dp))
             Button(
-                // M5: launchMultiplePermissionRequest is invoked from a non-composable onClick scope
                 onClick = { permissionState.launchMultiplePermissionRequest() },
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
