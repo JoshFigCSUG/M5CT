@@ -20,7 +20,10 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.delay // NEW
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow // NEW IMPORT
+import kotlinx.coroutines.flow.SharedFlow // NEW IMPORT
+import kotlinx.coroutines.flow.asSharedFlow // NEW IMPORT
 
 /**
  * Manages the UI-related data and state for the main photo gallery screen,
@@ -42,6 +45,10 @@ class GalleryViewModel(
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    // NEW: SharedFlow for one-time events, such as signaling successful deletion
+    private val _deleteSuccess = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
+    val deleteSuccess: SharedFlow<Boolean> = _deleteSuccess.asSharedFlow()
 
     init {
         _searchQuery
@@ -140,23 +147,28 @@ class GalleryViewModel(
         refreshLocalImagesAfterImport()
     }
 
-    suspend fun deleteSelectedPhoto(): Boolean {
-        val photoToDelete = _selectedImage.value ?: return false
-        if (photoToDelete.isLocal && photoToDelete.regularUrl.startsWith("content://")) {
-            val success = withContext(Dispatchers.IO) {
-                repository.deletePhoto(photoToDelete.regularUrl.toUri())
-            }
-            if (success) {
-                loadImages(_searchQuery.value)
-                _selectedImage.value = null
-                return true
+    /**
+     * MODIFIED: Launches deletion via viewModelScope and signals success via SharedFlow.
+     * The Composable will observe the flow for navigation.
+     */
+    fun deleteSelectedPhoto() {
+        // Use viewModelScope to launch the coroutine tied to the ViewModel's lifecycle
+        viewModelScope.launch {
+            val photoToDelete = _selectedImage.value ?: return@launch
+            if (photoToDelete.isLocal && photoToDelete.regularUrl.startsWith("content://")) {
+                val success = withContext(Dispatchers.IO) {
+                    repository.deletePhoto(photoToDelete.regularUrl.toUri())
+                }
+                if (success) {
+                    loadImages(_searchQuery.value)
+                    _selectedImage.value = null
+                    _deleteSuccess.emit(true) // SIGNAL SUCCESS
+                } else {
+                    println("Deletion failed for local photo: ${photoToDelete.id}.")
+                }
             } else {
-                println("Deletion failed for local photo: ${photoToDelete.id}.")
-                return false
+                println("Deletion blocked: Cannot delete remote or non-owned file.")
             }
-        } else {
-            println("Deletion blocked: Cannot delete remote or non-owned file.")
-            return false
         }
     }
 }

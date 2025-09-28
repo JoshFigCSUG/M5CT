@@ -193,14 +193,18 @@ private fun bindCameraUseCases(
 
 /**
  * Executes photo capture and handles file persistence via the Repository.
- * FIX: Now accepts a CoroutineScope for managed I/O delegation.
+ *
+ * FIX: Removed redundant Dispatchers.IO specification from the nested launch.
+ * The inner repository call viewModel.repository.saveCapturedPhoto handles its own
+ * context switching to Dispatchers.IO, making the outer specification unnecessary.
+ * The nested launch remains to bridge the non-suspending CameraX callback to the suspend function.
  */
 private suspend fun takePhotoAndSave(
     context: Context,
     cameraExecutor: Executor,
     imageCapture: ImageCapture,
     viewModel: GalleryViewModel,
-    parentScope: CoroutineScope // NEW: Accept managed scope
+    parentScope: CoroutineScope
 ): Uri? {
     val photoFile = File(
         context.cacheDir,
@@ -220,11 +224,10 @@ private suspend fun takePhotoAndSave(
             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                 val displayName = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
 
-                // FIX APPLIED: Use the managed parentScope to launch the I/O task,
-                // ensuring the operation is lifecycle-aware and prevents silent failures.
-                parentScope.launch(Dispatchers.IO) {
+                // MODIFIED: Nested launch no longer specifies Dispatchers.IO
+                parentScope.launch {
                     try {
-                        // 1. Delegate persistence (M3/M5 I/O)
+                        // 1. Delegate persistence (M3/M5 I/O) - saveCapturedPhoto uses withContext(Dispatchers.IO)
                         val savedUri = viewModel.repository.saveCapturedPhoto(photoFile, displayName)
 
                         // 2. Resume the outer coroutine with the final result

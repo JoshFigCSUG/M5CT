@@ -20,6 +20,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.ensureActive // NEW IMPORT
+import kotlin.coroutines.coroutineContext // Implicitly available in suspend functions
 
 /**
  * Handles all direct I/O interactions with the device's MediaStore (local storage).
@@ -154,9 +156,10 @@ class MediaStoreDataSource(private val context: Context) {
 
     /**
      * [API Q+] Reads data from the Photo Picker source URI and saves it as a new, app-owned file.
+     * ROBUSTNESS FIX: Stream copy loop added to enable coroutine cancellation mid-transfer.
      */
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun copyPhotoToAppStorageQPlus(context: Context, sourceUri: Uri): Uri? {
+    private suspend fun copyPhotoToAppStorageQPlus(context: Context, sourceUri: Uri): Uri? {
         val resolver = context.contentResolver
         val displayName = "IMP_${SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())}.jpg"
         var newUri: Uri? = null
@@ -180,7 +183,12 @@ class MediaStoreDataSource(private val context: Context) {
             // 2. Copy the data stream
             resolver.openInputStream(sourceUri)?.use { inputStream ->
                 resolver.openOutputStream(newUri)?.use { outputStream ->
-                    inputStream.copyTo(outputStream)
+                    // ROBUSTNESS FIX: Cancellable I/O loop
+                    val buffer = ByteArray(8192)
+                    var read: Int
+                    while (coroutineContext.ensureActive().let { read = inputStream.read(buffer); read >= 0 }) {
+                        outputStream.write(buffer, 0, read)
+                    }
                 } ?: throw IOException("Failed to open output stream for MediaStore URI.")
             } ?: throw IOException("Failed to open input stream from source URI.")
 
@@ -201,9 +209,10 @@ class MediaStoreDataSource(private val context: Context) {
     /**
      * [API < Q] Reads data from the Photo Picker source URI and saves it using the legacy
      * file path (DATA column) method.
+     * ROBUSTNESS FIX: Stream copy loop added to enable coroutine cancellation mid-transfer.
      */
     @Suppress("DEPRECATION")
-    private fun copyPhotoToAppStorageLegacy(context: Context, sourceUri: Uri): Uri? {
+    private suspend fun copyPhotoToAppStorageLegacy(context: Context, sourceUri: Uri): Uri? {
         val resolver = context.contentResolver
         val displayName = "IMP_${SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())}.jpg"
 
@@ -215,7 +224,12 @@ class MediaStoreDataSource(private val context: Context) {
         // 2. Stream data from the Photo Picker source URI to the new local file
         resolver.openInputStream(sourceUri)?.use { inputStream ->
             FileOutputStream(targetFile).use { outputStream ->
-                inputStream.copyTo(outputStream)
+                // ROBUSTNESS FIX: Cancellable I/O loop
+                val buffer = ByteArray(8192)
+                var read: Int
+                while (coroutineContext.ensureActive().let { read = inputStream.read(buffer); read >= 0 }) {
+                    outputStream.write(buffer, 0, read)
+                }
             }
         } ?: return null // Failed to open input stream
 
@@ -249,12 +263,10 @@ class MediaStoreDataSource(private val context: Context) {
     // 3. CREATE (CameraX): Saving a new capture file
     // ====================================================================
 
-    // ... (savePhotoToMediaStore remains the same as its logic is fine,
-    // it was already updated in the previous fix to use legacy BUCKET_DISPLAY_NAME and MediaScanner) ...
-
     /**
      * Saves a temporary CameraX photo file to the external storage via MediaStore.
      * Ensures the temporary file is deleted after successful persistence.
+     * ROBUSTNESS FIX: Stream copy loop added to enable coroutine cancellation mid-transfer.
      */
     suspend fun savePhotoToMediaStore(photoFile: File, displayName: String): Uri? = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
@@ -309,7 +321,12 @@ class MediaStoreDataSource(private val context: Context) {
                 // Q+: Stream from the temporary file to the MediaStore URI
                 resolver.openOutputStream(imageUri)?.use { outputStream ->
                     FileInputStream(photoFile).use { inputStream ->
-                        inputStream.copyTo(outputStream)
+                        // ROBUSTNESS FIX: Cancellable I/O loop
+                        val buffer = ByteArray(8192)
+                        var read: Int
+                        while (coroutineContext.ensureActive().let { read = inputStream.read(buffer); read >= 0 }) {
+                            outputStream.write(buffer, 0, read)
+                        }
                     }
                 }
 

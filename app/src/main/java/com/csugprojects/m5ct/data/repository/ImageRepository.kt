@@ -7,8 +7,10 @@ import com.csugprojects.m5ct.data.remote.UnsplashApi
 import com.csugprojects.m5ct.data.model.GalleryItem
 import com.csugprojects.m5ct.data.model.UnsplashPhotoDto // Ensure this is imported
 import com.csugprojects.m5ct.data.model.toGalleryItem
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import java.io.File
 
 /**
@@ -49,7 +51,7 @@ class ImageRepository(
             println("Network error: Failed to fetch photos for search term '$searchTerm'. Displaying local images only. Error: ${e.message}")
             // Fallback to showing only local images (already emitted in step 1)
         }
-    }
+    }.flowOn(Dispatchers.IO)
 
     /**
      * Proxies the save operation for CameraX captures.
