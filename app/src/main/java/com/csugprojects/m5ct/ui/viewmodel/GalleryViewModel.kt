@@ -32,7 +32,7 @@ class GalleryViewModel(
     private val _selectedImage = MutableStateFlow<GalleryItem?>(null)
     val selectedImage: StateFlow<GalleryItem?> = _selectedImage.asStateFlow()
 
-    // FIX: Single, correct declaration: defaults to empty string ("")
+    // Defaults to empty string ("") to trigger random photo fetch on startup
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
@@ -41,8 +41,8 @@ class GalleryViewModel(
         _searchQuery
             .debounce(300L)
             .filter { query ->
-                // Allow search if: query is long enough OR query is empty (to get random images)
-                query.length > 2 || query.isEmpty()
+                // FIX: Allow search if the query is blank (for random images) OR if the query is long enough.
+                query.isBlank() || query.length > 2
             }
             .onEach { query -> loadImages(query) }
             .launchIn(viewModelScope)
@@ -51,8 +51,6 @@ class GalleryViewModel(
     // Function to handle fetching both local and remote (search) images
     private fun loadImages(query: String) {
         viewModelScope.launch {
-            // Pass the current search query to the repository
-            // (Repository is assumed to call random API if query is blank)
             repository.getGalleryItems(query).collect { combinedList ->
                 _images.value = combinedList
             }
@@ -67,12 +65,11 @@ class GalleryViewModel(
      * Updates the StateFlow for the search query, which automatically triggers a reload.
      */
     fun setSearchQuery(query: String) {
-        // NOTE: The 'nature' check is no longer needed here, as the reactive flow handles empty strings.
         _searchQuery.value = query
     }
 
     /**
-     * RESTORED: Performs background I/O to copy photo picker URIs to permanent app storage.
+     * Performs background I/O to copy photo picker URIs to permanent app storage.
      */
     suspend fun processAndCopyPickerUris(context: Context, uris: List<Uri>): List<GalleryItem> {
         val copiedItems = mutableListOf<GalleryItem>()

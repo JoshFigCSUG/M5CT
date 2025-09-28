@@ -1,26 +1,25 @@
 package com.csugprojects.m5ct.data.remote
 
-import com.csugprojects.m5ct.data.model.UnsplashPhotoDto
 import com.csugprojects.m5ct.data.model.UnsplashResponse
+import com.csugprojects.m5ct.data.model.UnsplashPhotoDto
 import retrofit2.http.GET
 import retrofit2.http.Query
 
 // Retrofit Interface for fetching external data
 interface UnsplashApi {
+    // 1. Search endpoint (used when query is NOT blank)
     @GET("search/photos")
     suspend fun searchPhotos(
-        // NEW: Require the query parameter to be passed dynamically
-        @Query("query") query: String,
+        @Query("query") query: String, // Required parameter
         @Query("page") page: Int = 1,
         @Query("per_page") perPage: Int = 30,
-        // API Key handling is typically done via an Interceptor or Query annotation
         @Query("client_id") clientId: String = "5yGLJ6FLVF0ST0QcVxwE3YIv3h9-NvCCEQZAsVKR4FI"
     ): UnsplashResponse
 
-    // NEW: Endpoint for random photos
+    // 2. Random endpoint (used when query IS blank)
     @GET("photos/random")
     suspend fun getRandomPhotos(
-        @Query("count") count: Int = 30, // Request the same number of items as search
+        @Query("count") count: Int = 30, // Fetches a set number of random photos
         @Query("client_id") clientId: String = "5yGLJ6FLVF0ST0QcVxwE3YIv3h9-NvCCEQZAsVKR4FI"
-    ): List<UnsplashPhotoDto> // NOTE: This returns a list directly
+    ): List<UnsplashPhotoDto> // NOTE: This returns a list of DTOs directly
 }
