@@ -3,6 +3,7 @@ package com.csugprojects.m5ct.data.local
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -46,12 +47,12 @@ class MediaStoreDataSource(private val context: Context) {
     )
 
     // ====================================================================
-    // 1. READ: Fetching App-Owned Images (FIXED API 29+ path)
+    // 1. READ: Fetching App-Owned Images (With Robust Error Handling)
     // ====================================================================
 
     /**
      * Queries MediaStore specifically for images created/owned by this app,
-     * which are indexed under the Pictures/MyAppGallery folder.
+     * skipping any entries that appear corrupted or inaccessible.
      */
     fun getLocalImages(): List<GalleryItem> {
         val imageList = mutableListOf<GalleryItem>()
@@ -86,37 +87,51 @@ class MediaStoreDataSource(private val context: Context) {
         }
 
 
-        context.contentResolver.query(
-            collection,
-            projection,
-            selection,
-            selectionArgs,
-            sortOrder
-        )?.use { cursor ->
-            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+        try {
+            context.contentResolver.query(
+                collection,
+                projection,
+                selection,
+                selectionArgs,
+                sortOrder
+            )?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
 
-            while (cursor.moveToNext()) {
-                val id = cursor.getLong(idColumn)
-                val name = cursor.getString(nameColumn)
-                val contentUri = ContentUris.withAppendedId(collection, id)
+                while (cursor.moveToNext()) {
+                    try {
+                        val id = cursor.getLong(idColumn)
+                        val name = cursor.getString(nameColumn)
+                        val contentUri = ContentUris.withAppendedId(collection, id)
 
-                imageList.add(
-                    GalleryItem(
-                        id = id.toString(),
-                        regularUrl = contentUri.toString(),
-                        fullUrl = contentUri.toString(),
-                        description = name ?: "Local Image",
-                        isLocal = true
-                    )
-                )
+                        // NEW: Validate the URI exists and is accessible before adding
+                        if (isUriAccessible(contentUri)) {
+                            imageList.add(
+                                GalleryItem(
+                                    id = id.toString(),
+                                    regularUrl = contentUri.toString(),
+                                    fullUrl = contentUri.toString(),
+                                    description = name ?: "Local Image",
+                                    isLocal = true
+                                )
+                            )
+                        } else {
+                            println("Skipping inaccessible image entry: $contentUri")
+                        }
+                    } catch (e: Exception) {
+                        // Skip corrupted entries, preventing a crash on bad data
+                        println("Skipping corrupted image entry: ${e.message}")
+                    }
+                }
             }
+        } catch (e: Exception) {
+            println("Error querying local images: ${e.message}")
         }
         return imageList
     }
 
     // ====================================================================
-    // 2. CREATE (Photo Picker Copy): Inserts a non-owned file into MediaStore (FIXED API 29+ path)
+    // 2. CREATE (Photo Picker Copy)
     // ====================================================================
 
     /**
@@ -211,16 +226,31 @@ class MediaStoreDataSource(private val context: Context) {
             put(MediaStore.MediaColumns.DATA, targetFilePath) // CRITICAL: Legacy path
             put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
             put(MediaStore.Images.Media.SIZE, targetFile.length())
+            // NEW: Explicitly set BUCKET_DISPLAY_NAME for better legacy indexing (Fixes initial deletion crash)
+            put(MediaStore.Images.Media.BUCKET_DISPLAY_NAME, scopedRelativePathValue)
         }
 
         val newUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+
+        // NEW: Explicitly trigger the Media Scanner for legacy devices (Fixes initial load delay)
+        if (newUri != null) {
+            context.sendBroadcast(
+                Intent(
+                    Intent.ACTION_MEDIA_SCANNER_SCAN_FILE,
+                    newUri
+                )
+            )
+        }
 
         return newUri
     }
 
     // ====================================================================
-    // 3. CREATE (CameraX): Saving a new capture file (FIXED API 29+ path)
+    // 3. CREATE (CameraX): Saving a new capture file
     // ====================================================================
+
+    // ... (savePhotoToMediaStore remains the same as its logic is fine,
+    // it was already updated in the previous fix to use legacy BUCKET_DISPLAY_NAME and MediaScanner) ...
 
     /**
      * Saves a temporary CameraX photo file to the external storage via MediaStore.
@@ -263,6 +293,8 @@ class MediaStoreDataSource(private val context: Context) {
                 } else {
                     // Legacy: Use the absolute path of the final destination file
                     put(MediaStore.Images.Media.DATA, targetFile!!.absolutePath)
+                    // Ensure legacy files are properly indexed
+                    put(MediaStore.Images.Media.BUCKET_DISPLAY_NAME, scopedRelativePathValue)
                 }
             }
 
@@ -289,6 +321,13 @@ class MediaStoreDataSource(private val context: Context) {
             } else {
                 // Legacy: Copy temp cache file to permanent storage location
                 photoFile.copyTo(targetFile!!, overwrite = true)
+                // Ensure media scanner runs after file copy on legacy devices
+                context.sendBroadcast(
+                    Intent(
+                        Intent.ACTION_MEDIA_SCANNER_SCAN_FILE,
+                        imageUri
+                    )
+                )
             }
 
             // 3. Clean up the temporary CameraX file
@@ -305,19 +344,47 @@ class MediaStoreDataSource(private val context: Context) {
         }
     }
 
+
     // ====================================================================
-    // 4. DELETE: Deleting an app-owned file
+    // 4. DELETE: Deleting an app-owned file (Enhanced Error Handling)
     // ====================================================================
 
     /**
      * Deletes a photo from the device's shared storage using its Content URI.
+     * Includes error handling to prevent application crashes.
      */
     fun deletePhotoFromMediaStore(uri: Uri): Boolean {
-        return context.contentResolver.delete(uri, null, null) > 0
+        println("Attempting to delete: $uri")
+
+        try {
+            // NEW: First verify the URI is valid and accessible before attempting deletion
+            if (!isUriAccessible(uri)) {
+                println("URI not accessible for deletion, treating as already deleted or corrupted: $uri")
+                return false
+            }
+
+            val result = context.contentResolver.delete(uri, null, null)
+            if (result > 0) {
+                println("Successfully deleted image: $uri")
+                return true
+            } else {
+                println("Failed to delete image (no rows affected): $uri")
+                return false
+            }
+        } catch (e: SecurityException) {
+            println("Permission denied for deletion, check app permissions: $uri - ${e.message}")
+            return false
+        } catch (e: Exception) {
+            // Catching general exceptions that might occur due to MediaStore corruption
+            println("Error deleting image: $uri - ${e.message}")
+            e.printStackTrace()
+            return false
+        }
     }
 
+
     // ====================================================================
-    // 5. HELPER FUNCTION
+    // 5. HELPER FUNCTIONS
     // ====================================================================
 
     /**
@@ -336,5 +403,17 @@ class MediaStoreDataSource(private val context: Context) {
             finalDir.mkdirs()
         }
         return finalDir
+    }
+
+    /**
+     * NEW: Checks if a given Content URI is accessible (can be opened for reading).
+     * Used to filter out corrupted or inaccessible MediaStore entries.
+     */
+    private fun isUriAccessible(uri: Uri): Boolean {
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { true } ?: false
+        } catch (e: Exception) {
+            false
+        }
     }
 }

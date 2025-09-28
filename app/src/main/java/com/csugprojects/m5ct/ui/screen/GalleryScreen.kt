@@ -1,4 +1,4 @@
-package com.csugprojects.m5ct.ui.screen
+package com.csugprojects.m5ct.ui.screen // <--- CRITICAL: MUST be this package
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -83,6 +83,10 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
         permissions = CAMERA_PERMISSIONS
     )
 
+    // REVERTED: Removed the LaunchedEffect that automatically launched the picker after permissions were granted.
+    // The user must now click the image button a second time after granting permission.
+
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -90,7 +94,7 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
                 actions = {
                     // 1. Button to launch the system Photo Picker (STORAGE PERMISSION CHECK)
                     if (storagePermissionState.allPermissionsGranted) {
-                        // Permissions granted, launch picker directly
+                        // Permissions granted: Clicks launch the picker directly.
                         IconButton(onClick = {
                             photoPickerLauncher.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -99,7 +103,7 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
                             Icon(Icons.Filled.Image, contentDescription = "Select Local Images")
                         }
                     } else {
-                        // Permissions not granted, show button that requests them on click
+                        // Permissions not granted: Button requests permissions.
                         IconButton(onClick = {
                             storagePermissionState.launchMultiplePermissionRequest()
                         }) {

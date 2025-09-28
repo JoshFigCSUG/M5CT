@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.csugprojects.m5ct.data.model.GalleryItem
 import com.csugprojects.m5ct.data.repository.ImageRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,11 +20,13 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay // NEW
 
 /**
  * Manages the UI-related data and state for the main photo gallery screen,
  * including handling dynamic search queries and background I/O.
  */
+@OptIn(FlowPreview::class)
 class GalleryViewModel(
     val repository: ImageRepository // Public for CameraScreen I/O delegation
 ) : ViewModel() {
@@ -40,8 +43,6 @@ class GalleryViewModel(
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    // The StateFlow and methods for cueing the Photo Picker are removed.
-
     init {
         _searchQuery
             .debounce(300L)
@@ -51,8 +52,6 @@ class GalleryViewModel(
             .onEach { query -> loadImages(query) }
             .launchIn(viewModelScope)
     }
-
-    // The functions cuePhotoPickerOnEmptyGallery() and onPickerLaunched() are removed.
 
     /**
      * Function to handle fetching both local and remote (search) images.
@@ -70,6 +69,38 @@ class GalleryViewModel(
                 _errorMessage.value = "Failed to connect to image service. Check your internet connection or API key."
                 if (_images.value.isEmpty()) {
                     _images.value = emptyList()
+                }
+            }
+        }
+    }
+
+    /**
+     * NEW: Performs a local image refresh with retries to account for MediaStore indexing delays.
+     */
+    fun refreshLocalImagesAfterImport() {
+        viewModelScope.launch {
+            val maxRetries = 3
+            var retryCount = 0
+            var imagesLoaded = false
+
+            while (!imagesLoaded && retryCount < maxRetries) {
+                try {
+                    repository.getGalleryItems(_searchQuery.value).collect { combinedList ->
+                        _images.value = combinedList
+                        imagesLoaded = true
+                    }
+                } catch (e: Exception) {
+                    println("Error during image refresh: ${e.message}. Retrying...")
+                    // Only display final error if retries fail
+                    if (retryCount == maxRetries - 1) {
+                        _errorMessage.value = "Failed to load newly imported photos after multiple retries."
+                    }
+                }
+
+                if (!imagesLoaded) {
+                    // Wait 500ms before retrying
+                    delay(500L)
+                    retryCount++
                 }
             }
         }
@@ -100,14 +131,15 @@ class GalleryViewModel(
     }
 
     fun handleNewCapturedPhoto(photoUri: Uri) {
-        loadImages(_searchQuery.value)
+        // Use the robust refresh function
+        refreshLocalImagesAfterImport()
     }
 
     fun handleNewPhotoPickerUris(newItems: List<GalleryItem>) {
-        loadImages(_searchQuery.value)
+        // Use the robust refresh function
+        refreshLocalImagesAfterImport()
     }
 
-    // Change function signature: make it suspend and remove the internal viewModelScope.launch
     suspend fun deleteSelectedPhoto(): Boolean {
         val photoToDelete = _selectedImage.value ?: return false
         if (photoToDelete.isLocal && photoToDelete.regularUrl.startsWith("content://")) {
@@ -115,7 +147,6 @@ class GalleryViewModel(
                 repository.deletePhoto(photoToDelete.regularUrl.toUri())
             }
             if (success) {
-                // Update the state on successful deletion
                 loadImages(_searchQuery.value)
                 _selectedImage.value = null
                 return true
