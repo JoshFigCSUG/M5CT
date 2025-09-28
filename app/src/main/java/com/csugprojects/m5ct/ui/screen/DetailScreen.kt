@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -21,6 +22,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.csugprojects.m5ct.ui.viewmodel.GalleryViewModel
 import com.csugprojects.m5ct.data.model.GalleryItem
+import kotlinx.coroutines.launch
 
 /**
  * Screen displaying the single selected image in full detail, including comprehensive metadata. (View Layer)
@@ -32,6 +34,7 @@ fun DetailScreen(navController: NavHostController, viewModel: GalleryViewModel) 
     // Observes the currently selected image from the ViewModel
     val selectedImage by viewModel.selectedImage.collectAsState(initial = null)
     val scrollState = rememberScrollState()
+    val coroutineScope = rememberCoroutineScope() // NEW: Get CoroutineScope
 
     Scaffold(
         topBar = {
@@ -46,8 +49,13 @@ fun DetailScreen(navController: NavHostController, viewModel: GalleryViewModel) 
                     // Show delete button only if the image is local (app-owned)
                     if (selectedImage?.isLocal == true) {
                         IconButton(onClick = {
-                            viewModel.deleteSelectedPhoto()
-                            navController.popBackStack()
+                            // MODIFIED: Launch coroutine to await deletion before popping back stack
+                            coroutineScope.launch {
+                                val success = viewModel.deleteSelectedPhoto()
+                                if (success) {
+                                    navController.popBackStack() // Only navigate away on successful deletion
+                                }
+                            }
                         }) {
                             Icon(Icons.Filled.Delete, contentDescription = "Delete Photo")
                         }

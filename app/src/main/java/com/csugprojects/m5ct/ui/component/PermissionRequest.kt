@@ -1,3 +1,5 @@
+// app/src/main/java/com/csugprojects/m5ct/ui/component/PermissionRequest.kt
+
 package com.csugprojects.m5ct.ui.component
 
 import android.Manifest
@@ -9,21 +11,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.csugprojects.m5ct.ui.viewmodel.GalleryViewModel
-import com.csugprojects.m5ct.navigation.AppNavigation
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.rememberMultiplePermissionsState
 
 // =========================================================================
-// 1. Permissions List (Centralized definition)
+// 1. Permissions Lists (Centralized definition)
 // =========================================================================
 
-val REQUIRED_PERMISSIONS = listOfNotNull(
-    Manifest.permission.CAMERA,
+// Permissions needed for the Camera feature (Will be checked in CameraScreen)
+val CAMERA_PERMISSIONS = listOfNotNull(
+    Manifest.permission.CAMERA
+)
 
-    // M3: Storage access for existing images (Scoped Storage handling)
+// Permissions needed for reading/writing local files (MediaStore) (Checked in GalleryScreen)
+val STORAGE_PERMISSIONS = listOfNotNull(
+    // M3: Storage access for reading existing images
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         Manifest.permission.READ_MEDIA_IMAGES
     } else {
@@ -37,48 +38,27 @@ val REQUIRED_PERMISSIONS = listOfNotNull(
 )
 
 // =========================================================================
-// 2. Permission Handler Composable
+// 2. Permission Handler Composable (REMOVED: The root PermissionHandler is deleted)
 // =========================================================================
 
-/**
- * The root composable launched by MainActivity.kt. It gates access to the main
- * app navigation based on the runtime status of required permissions (M5).
+/*
+ * The root PermissionHandler composable is REMOVED as requested.
+ * It is no longer needed since permissions are deferred to individual screens.
  */
-@OptIn(ExperimentalPermissionsApi::class)
-@Composable
-fun PermissionHandler(viewModelFactory: ViewModelProvider.Factory) {
-    val permissionState = rememberMultiplePermissionsState(
-        permissions = REQUIRED_PERMISSIONS
-    )
-    val viewModel: GalleryViewModel = viewModel(factory = viewModelFactory)
-    val allGranted = permissionState.allPermissionsGranted
 
-    LaunchedEffect(permissionState.permissions) {
-        if (permissionState.allPermissionsGranted) {
-            println("Permissions granted. Cueing photo picker event.")
-            // NEW: Call the ViewModel function to set the flag for the next screen
-            viewModel.cuePhotoPickerOnEmptyGallery()
-        }
-    }
-
-    if (allGranted) {
-        // This is the correct path for a successful permission grant.
-        AppNavigation(viewModel)
-    } else {
-        // Fallback UI
-        PermissionRationaleUI(permissionState)
-    }
-}
 
 // =========================================================================
-// 3. Rationale UI (Composable for Denied State)
+// 3. Rationale UI (Composable for Denied State) - KEPT as a utility
 // =========================================================================
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Composable
-private fun PermissionRationaleUI(permissionState: com.google.accompanist.permissions.MultiplePermissionsState) {
+fun PermissionRationaleUI( // Changed visibility from private to public/default
+    permissionState: com.google.accompanist.permissions.MultiplePermissionsState,
+    featureName: String
+) {
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Permissions Required") }) },
+        topBar = { TopAppBar(title = { Text("$featureName Permissions Required") }) },
         modifier = Modifier.fillMaxSize()
     ) { padding ->
         Column(
@@ -90,7 +70,7 @@ private fun PermissionRationaleUI(permissionState: com.google.accompanist.permis
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                "This gallery requires Camera and Storage access to function (M5). Please grant access to use the features.",
+                "The $featureName feature requires necessary permissions to function. Please grant access.",
                 style = MaterialTheme.typography.titleMedium,
                 textAlign = TextAlign.Center
             )

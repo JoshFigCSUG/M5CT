@@ -1,3 +1,5 @@
+// app/src/main/java/com/csugprojects/m5ct/ui/viewmodel/GalleryViewModel.kt
+
 package com.csugprojects.m5ct.ui.viewmodel
 
 import android.content.Context
@@ -38,9 +40,7 @@ class GalleryViewModel(
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    // StateFlow to trigger the photo picker launch in the UI once
-    private val _launchPickerEvent = MutableStateFlow(false)
-    val launchPickerEvent: StateFlow<Boolean> = _launchPickerEvent.asStateFlow()
+    // The StateFlow and methods for cueing the Photo Picker are removed.
 
     init {
         _searchQuery
@@ -50,40 +50,20 @@ class GalleryViewModel(
             }
             .onEach { query -> loadImages(query) }
             .launchIn(viewModelScope)
-
-        // Removed the internal initialization check. The event is now triggered externally.
     }
+
+    // The functions cuePhotoPickerOnEmptyGallery() and onPickerLaunched() are removed.
 
     /**
-     * NEW: Public function called by a transient screen (like PermissionHandler)
-     * to request the Photo Picker to launch on the next screen if the gallery is currently empty.
+     * Function to handle fetching both local and remote (search) images.
      */
-    fun cuePhotoPickerOnEmptyGallery() {
-        if (_images.value.isEmpty()) {
-            _launchPickerEvent.value = true
-        }
-    }
-
-    /**
-     * Called by the UI after the picker is launched to reset the event flag.
-     */
-    fun onPickerLaunched() {
-        _launchPickerEvent.value = false
-    }
-
-    // Function to handle fetching both local and remote (search) images
-    private fun loadImages(query: String) {
+    fun loadImages(query: String) {
         viewModelScope.launch {
             try {
                 _errorMessage.value = null
 
                 repository.getGalleryItems(query).collect { combinedList ->
                     _images.value = combinedList
-
-                    // Reset the picker flag if we successfully load images
-                    if (combinedList.isNotEmpty()) {
-                        _launchPickerEvent.value = false
-                    }
                 }
             } catch (e: Exception) {
                 println("Error during image fetch: ${e.message}")
@@ -127,22 +107,25 @@ class GalleryViewModel(
         loadImages(_searchQuery.value)
     }
 
-    fun deleteSelectedPhoto() {
-        val photoToDelete = _selectedImage.value ?: return
+    // Change function signature: make it suspend and remove the internal viewModelScope.launch
+    suspend fun deleteSelectedPhoto(): Boolean {
+        val photoToDelete = _selectedImage.value ?: return false
         if (photoToDelete.isLocal && photoToDelete.regularUrl.startsWith("content://")) {
-            viewModelScope.launch {
-                val success = withContext(Dispatchers.IO) {
-                    repository.deletePhoto(photoToDelete.regularUrl.toUri())
-                }
-                if (success) {
-                    loadImages(_searchQuery.value)
-                    _selectedImage.value = null
-                } else {
-                    println("Deletion failed for local photo: ${photoToDelete.id}.")
-                }
+            val success = withContext(Dispatchers.IO) {
+                repository.deletePhoto(photoToDelete.regularUrl.toUri())
+            }
+            if (success) {
+                // Update the state on successful deletion
+                loadImages(_searchQuery.value)
+                _selectedImage.value = null
+                return true
+            } else {
+                println("Deletion failed for local photo: ${photoToDelete.id}.")
+                return false
             }
         } else {
             println("Deletion blocked: Cannot delete remote or non-owned file.")
+            return false
         }
     }
 }

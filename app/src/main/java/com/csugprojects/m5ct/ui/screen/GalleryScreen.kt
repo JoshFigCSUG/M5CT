@@ -21,7 +21,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.LaunchedEffect // NEW
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -37,11 +37,15 @@ import com.csugprojects.m5ct.ui.viewmodel.GalleryViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.csugprojects.m5ct.ui.component.STORAGE_PERMISSIONS
+import com.csugprojects.m5ct.ui.component.CAMERA_PERMISSIONS
+import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.rememberMultiplePermissionsState
 
 /**
  * The main screen of the application (View Layer), featuring the DockedSearchBar and image grid.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @Composable
 fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel) {
     val context = LocalContext.current
@@ -51,9 +55,6 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
     val searchQuery by viewModel.searchQuery.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
 
-    // NEW: Observe the event flag from the ViewModel
-    val launchPickerEvent by viewModel.launchPickerEvent.collectAsState()
-
     // State to manage the search bar's active/expanded state
     var isSearchActive by remember { mutableStateOf(false) }
 
@@ -61,9 +62,6 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 10),
         onResult = { uris ->
-            // Reset the ViewModel flag after the picker returns (whether successful or canceled)
-            viewModel.onPickerLaunched()
-
             if (uris.isNotEmpty()) {
                 coroutineScope.launch(Dispatchers.IO) {
                     val newItems = viewModel.processAndCopyPickerUris(context, uris)
@@ -75,42 +73,49 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
         }
     )
 
-    // NEW: LaunchedEffect to observe the launch flag and trigger the picker once
-    LaunchedEffect(launchPickerEvent) {
-        if (launchPickerEvent) {
-            // Check to ensure images are truly empty before launching (safety measure)
-            if (images.isEmpty()) {
-                photoPickerLauncher.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                )
-                // We will rely on the onResult lambda to call viewModel.onPickerLaunched()
-                // OR on the ViewModel's loadImages to reset the flag.
-            } else {
-                // If the flag was true but images loaded anyway (e.g., local cache found something),
-                // ensure the flag is turned off.
-                viewModel.onPickerLaunched()
-            }
-        }
-    }
+    // Permission state for local storage access (only for reading/writing local files)
+    val storagePermissionState = rememberMultiplePermissionsState(
+        permissions = STORAGE_PERMISSIONS
+    )
 
+    // Permission state for Camera access
+    val cameraPermissionState = rememberMultiplePermissionsState(
+        permissions = CAMERA_PERMISSIONS
+    )
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Modern Photo Gallery") },
                 actions = {
-                    // 1. Button to launch the system Photo Picker
-                    IconButton(onClick = {
-                        photoPickerLauncher.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                        )
-                    }) {
-                        Icon(Icons.Filled.Image, contentDescription = "Select Local Images")
+                    // 1. Button to launch the system Photo Picker (STORAGE PERMISSION CHECK)
+                    if (storagePermissionState.allPermissionsGranted) {
+                        // Permissions granted, launch picker directly
+                        IconButton(onClick = {
+                            photoPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        }) {
+                            Icon(Icons.Filled.Image, contentDescription = "Select Local Images")
+                        }
+                    } else {
+                        // Permissions not granted, show button that requests them on click
+                        IconButton(onClick = {
+                            storagePermissionState.launchMultiplePermissionRequest()
+                        }) {
+                            Icon(Icons.Filled.Image, contentDescription = "Request Storage Permissions")
+                        }
                     }
 
-                    // 2. Button to launch the CameraX screen
-                    IconButton(onClick = { navController.navigate(Routes.CAMERA) }) {
-                        Icon(Icons.Filled.Camera, contentDescription = "Open Camera (M5)")
+                    // 2. Button to launch the CameraX screen (CAMERA PERMISSION CHECK)
+                    if (cameraPermissionState.allPermissionsGranted) {
+                        IconButton(onClick = { navController.navigate(Routes.CAMERA) }) {
+                            Icon(Icons.Filled.Camera, contentDescription = "Open Camera (M5)")
+                        }
+                    } else {
+                        IconButton(onClick = { cameraPermissionState.launchMultiplePermissionRequest() }) {
+                            Icon(Icons.Filled.Camera, contentDescription = "Request Camera Permissions")
+                        }
                     }
                 }
             )
@@ -156,7 +161,8 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
                         !errorMessage.isNullOrEmpty() -> errorMessage!!
                         // 2. Show No Search Results (query is not blank, but images are empty)
                         searchQuery.isNotBlank() -> "No images found for \"$searchQuery\"."
-                        // 3. Initial/Empty State (Awaiting random images or local load)
+                        // 3. Initial/Empty State (If local images can't load without permission)
+                        !storagePermissionState.allPermissionsGranted -> "Local images require storage permission. Loading network images..."
                         else -> "Loading random images or check connectivity."
                     }
                     Text(

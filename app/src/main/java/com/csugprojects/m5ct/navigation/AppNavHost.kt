@@ -22,7 +22,7 @@ fun AppNavigation(viewModel: GalleryViewModel = viewModel()) {
     // Sets up the NavHost, starting at the main gallery screen
     NavHost(
         navController = navController,
-        startDestination = Routes.GALLERY
+        startDestination = Routes.GALLERY // <-- This line sets the initial screen
     ) {
 
         // Route for the Main Gallery Grid (Home Screen)
