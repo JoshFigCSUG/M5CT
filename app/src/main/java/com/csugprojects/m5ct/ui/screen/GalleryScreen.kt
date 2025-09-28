@@ -11,11 +11,16 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -33,30 +38,29 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * The main screen of the application (View Layer).
- * It uses the Android Photo Picker (policy compliant) for local image selection and processing.
+ * The main screen of the application (View Layer), featuring the DockedSearchBar and image grid.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel) {
     val context = LocalContext.current
-    val images by viewModel.images.collectAsState(initial = emptyList())
     val coroutineScope = rememberCoroutineScope()
 
-    // --- PHOTO PICKER LAUNCHER (M5 Policy Compliance) ---
+    val images by viewModel.images.collectAsState(initial = emptyList())
+    val searchQuery by viewModel.searchQuery.collectAsState()
+
+    // State to manage the search bar's active/expanded state
+    var isSearchActive by remember { mutableStateOf(false) }
+
+    // --- PHOTO PICKER LAUNCHER (Policy Compliant Import) ---
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 10),
         onResult = { uris ->
             if (uris.isNotEmpty()) {
-                coroutineScope.launch(Dispatchers.IO) { // 1. Start I/O on background thread
-
-                    // A. Get the list of new, persisted items from the ViewModel logic
+                coroutineScope.launch(Dispatchers.IO) {
                     val newItems = viewModel.processAndCopyPickerUris(context, uris)
-
-                    // B. CRITICAL FIX: Switch back to the Main Thread for safe state modification
                     withContext(Dispatchers.Main) {
-                        // The state update MUST happen here, guaranteeing Main Thread access
-                        viewModel.handleNewPhotoPickerUris(newItems) // This now triggers a full refresh
+                        viewModel.handleNewPhotoPickerUris(newItems)
                     }
                 }
             }
@@ -68,7 +72,7 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
             TopAppBar(
                 title = { Text("Modern Photo Gallery") },
                 actions = {
-                    // 1. Button to launch the system Photo Picker (Manual User Action)
+                    // 1. Button to launch the system Photo Picker
                     IconButton(onClick = {
                         photoPickerLauncher.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -85,23 +89,67 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
             )
         }
     ) { padding ->
-        if (images.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("Tap the image icon to select local photos or wait for remote load.")
-            }
-        } else {
-            // M5: Use LazyVerticalGrid for efficient display
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 120.dp),
-                contentPadding = PaddingValues(4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.padding(padding)
+        // Use a Column to hold the search bar and the main content list
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            // DockedSearchBar implementation
+            DockedSearchBar(
+                query = searchQuery,
+                onQueryChange = { viewModel.setSearchQuery(it) },
+                onSearch = {
+                    // When the user hits enter, deactivate the search bar
+                    isSearchActive = false
+                },
+                placeholder = { Text("Search Unsplash") },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                trailingIcon = {
+                    // The clear button logic now checks for an empty string (for random images)
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { viewModel.setSearchQuery("") }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Clear Search")
+                        }
+                    }
+                },
+                // Use 'active' and 'onActiveChange' directly for correct state management
+                active = isSearchActive,
+                onActiveChange = { active -> isSearchActive = active },
+
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
             ) {
-                items(images, key = { it.id }) { item ->
-                    GalleryGridItem(item) {
-                        viewModel.selectImage(item)
-                        navController.navigate(Routes.DETAIL)
+                // Content of the expanded search (suggestions/history) can go here
+            }
+
+            // Main Content: Lazy Grid
+            if (images.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        // Updated empty message based on search state
+                        text = if (searchQuery.isEmpty()) {
+                            "Loading random images or check connectivity."
+                        } else {
+                            "No results for: \"$searchQuery\". Try a different search term or check connectivity."
+                        },
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 120.dp),
+                    contentPadding = PaddingValues(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.fillMaxSize() // Fills the rest of the Column space
+                ) {
+                    items(images, key = { it.id }) { item ->
+                        GalleryGridItem(item) {
+                            viewModel.selectImage(item)
+                            navController.navigate(Routes.DETAIL)
+                        }
                     }
                 }
             }
@@ -110,8 +158,7 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
 }
 
 /**
- * Reusable Composable for a single image tile in the grid.
- * Encapsulates Coil integration logic.
+ * Reusable Composable for a single image tile in the grid, encapsulating Coil loading.
  */
 @Composable
 fun GalleryGridItem(item: GalleryItem, onClick: () -> Unit) {
@@ -122,7 +169,7 @@ fun GalleryGridItem(item: GalleryItem, onClick: () -> Unit) {
             .aspectRatio(1f)
             .clickable(onClick = onClick)
     ) {
-        // M5: Coil integration for efficient loading
+        // Coil integration for efficient loading
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(item.regularUrl)

@@ -8,13 +8,19 @@ import androidx.lifecycle.viewModelScope
 import com.csugprojects.m5ct.data.model.GalleryItem
 import com.csugprojects.m5ct.data.repository.ImageRepository
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Manages the UI-related data and state for the main photo gallery screen.
- * This is the ViewModel layer.
+ * Manages the UI-related data and state for the main photo gallery screen,
+ * including handling dynamic search queries and background I/O.
  */
 class GalleryViewModel(
     val repository: ImageRepository // Public for CameraScreen I/O delegation
@@ -26,12 +32,28 @@ class GalleryViewModel(
     private val _selectedImage = MutableStateFlow<GalleryItem?>(null)
     val selectedImage: StateFlow<GalleryItem?> = _selectedImage.asStateFlow()
 
-    init { loadImages() }
+    // FIX: Single, correct declaration: defaults to empty string ("")
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    private fun loadImages() {
+    init {
+        // CRITICAL: Set up the reactive flow to reload images whenever the search query changes
+        _searchQuery
+            .debounce(300L)
+            .filter { query ->
+                // Allow search if: query is long enough OR query is empty (to get random images)
+                query.length > 2 || query.isEmpty()
+            }
+            .onEach { query -> loadImages(query) }
+            .launchIn(viewModelScope)
+    }
+
+    // Function to handle fetching both local and remote (search) images
+    private fun loadImages(query: String) {
         viewModelScope.launch {
-            // Collecting the flow ensures the combined list (local + remote) is retrieved.
-            repository.getGalleryItems().collect { combinedList ->
+            // Pass the current search query to the repository
+            // (Repository is assumed to call random API if query is blank)
+            repository.getGalleryItems(query).collect { combinedList ->
                 _images.value = combinedList
             }
         }
@@ -42,26 +64,22 @@ class GalleryViewModel(
     }
 
     /**
-     * FIX: Triggers a full data refresh to sync with MediaStore after capture.
+     * Updates the StateFlow for the search query, which automatically triggers a reload.
      */
-    fun handleNewCapturedPhoto(photoUri: Uri) {
-        // The newly saved image is now guaranteed to be in the MediaStore,
-        // so we force the ViewModel to re-query the single source of truth.
-        loadImages()
+    fun setSearchQuery(query: String) {
+        // NOTE: The 'nature' check is no longer needed here, as the reactive flow handles empty strings.
+        _searchQuery.value = query
     }
 
     /**
-     * M3/M5 Policy Compliant Flow: Performs background I/O and returns the results.
+     * RESTORED: Performs background I/O to copy photo picker URIs to permanent app storage.
      */
     suspend fun processAndCopyPickerUris(context: Context, uris: List<Uri>): List<GalleryItem> {
-        // This function runs on Dispatchers.IO.
         val copiedItems = mutableListOf<GalleryItem>()
 
         for (uri in uris) {
-            // This is the I/O call which is now fixed to handle all API levels
             val copiedUri = repository.copyPhotoToAppStorage(context, uri)
 
-            // The data model conversion is still needed here for logical consistency
             copiedUri?.let {
                 copiedItems.add(
                     GalleryItem(id = it.toString(), regularUrl = it.toString(), fullUrl = it.toString(), description = "Imported Photo", isLocal = true)
@@ -69,17 +87,21 @@ class GalleryViewModel(
             }
         }
 
-        return copiedItems // Return results for the View to process on the Main Thread
+        return copiedItems
     }
 
     /**
-     * Synchronized method to update the StateFlow with new items.
-     * NOTE: This is called by the View *after* the I/O completes on the Main Thread.
-     * FIX: Triggers a full data refresh to sync with MediaStore after copy operation.
+     * Triggers a full data refresh using the current search term after a CameraX capture.
+     */
+    fun handleNewCapturedPhoto(photoUri: Uri) {
+        loadImages(_searchQuery.value)
+    }
+
+    /**
+     * Triggers a full data refresh using the current search term after a Photo Picker import.
      */
     fun handleNewPhotoPickerUris(newItems: List<GalleryItem>) {
-        // The file copy operation is complete, so we force a full refresh.
-        loadImages()
+        loadImages(_searchQuery.value)
     }
 
     fun deleteSelectedPhoto() {
@@ -90,8 +112,7 @@ class GalleryViewModel(
                     repository.deletePhoto(photoToDelete.regularUrl.toUri())
                 }
                 if (success) {
-                    // Triggers a full data refresh after deletion
-                    loadImages()
+                    loadImages(_searchQuery.value)
                     _selectedImage.value = null
                 } else {
                     println("Deletion failed for local photo: ${photoToDelete.id}.")
