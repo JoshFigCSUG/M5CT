@@ -1,5 +1,3 @@
-// app/src/main/java/com/csugprojects/m5ct/MainActivity.kt
-
 package com.csugprojects.m5ct
 
 import android.os.Bundle
@@ -12,35 +10,40 @@ import com.csugprojects.m5ct.data.local.MediaStoreDataSource
 import com.csugprojects.m5ct.data.remote.UnsplashApiService
 import com.csugprojects.m5ct.data.remote.UnsplashApi
 import com.csugprojects.m5ct.ui.theme.M5CTTheme
-// REMOVED: import com.csugprojects.m5ct.ui.component.PermissionHandler
-import com.csugprojects.m5ct.navigation.AppNavigation // NEW: Import AppNavigation directly
+import com.csugprojects.m5ct.navigation.AppNavigation
+import com.csugprojects.m5ct.ui.viewmodel.GalleryViewModel
 
-// =========================================================================
-// 1. DEPENDENCY SETUP
-// =========================================================================
-
+/**
+ * The main activity of the application.
+ * This class is responsible for setting up the environment, including Dependency Injection (DI)
+ * and initializing the Jetpack Compose UI.
+ */
 class MainActivity : ComponentActivity() {
 
+    // Holds the factory needed to create the ViewModel with its dependencies.
     private lateinit var viewModelFactory: ViewModelProvider.Factory
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // MANUAL DEPENDENCY INJECTION (DI) SETUP: Creates the entire data graph
+        // Manual Dependency Injection Setup (Composition Root).
+        // 1. Create Data Sources (Local and Remote).
         val mediaStoreDataSource = MediaStoreDataSource(applicationContext)
         val unsplashApiImpl: UnsplashApi = UnsplashApiService.api
+
+        // 2. Create the Repository, injecting the two data sources.
         val imageRepository = ImageRepository(unsplashApiImpl, mediaStoreDataSource)
 
-        // Final object needed by the UI
+        // 3. Create the Factory, injecting the Repository.
         viewModelFactory = GalleryViewModelFactory(imageRepository)
 
         setContent {
-            // M5: Apply the Material 3 Theme (View Layer)
-            val viewModel = viewModelFactory.create(com.csugprojects.m5ct.ui.viewmodel.GalleryViewModel::class.java) // Manually create ViewModel
-
+            // Applies the customized Material 3 Theme to the entire application.
             M5CTTheme {
-                // Launch AppNavigation directly, without permission gating.
-                // Permissions will now be checked within individual screens (GalleryScreen/CameraScreen).
+                // Manually obtains the ViewModel using the custom factory.
+                val viewModel = viewModelFactory.create(GalleryViewModel::class.java)
+
+                // Starts the Compose navigation graph.
                 AppNavigation(viewModel)
             }
         }

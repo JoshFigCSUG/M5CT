@@ -1,27 +1,28 @@
 package com.csugprojects.m5ct.data.model
 
-import android.net.Uri
+import kotlinx.serialization.SerialName
 
 // =========================================================================
-// 1. DOMAIN MODEL: Used by the ViewModel and UI
+// 1. DOMAIN MODEL (Used by the Repository, ViewModel, and UI)
 // =========================================================================
 
 /**
- * Represents a single photo item displayed in the Gallery.
- * Used consistently across the UI, whether sourced locally or remotely.
+ * The core data structure representing a photo in the application.
+ * This clean model is used everywhere, abstracting whether the photo is local or from the network.
+ * This separation is fundamental to the MVVM Model layer.
  */
 data class GalleryItem(
     val id: String,
-    val regularUrl: String, // URL/URI for display in the grid
-    val fullUrl: String,    // URL/URI for detail view (higher resolution)
+    val regularUrl: String, // URI or URL used for display in the photo grid.
+    val fullUrl: String,    // URI or URL used for the detailed, high-resolution view.
     val description: String?,
-    val isLocal: Boolean = false, // True if fetched from MediaStore
+    val isLocal: Boolean = false, // True if sourced from the device's MediaStore.
 
-    // NEW METADATA FIELDS:
+    // General Metadata
     val filename: String? = null,
     val fileSize: String? = null,
 
-    // NEW EXIF FIELDS
+    // EXIF (Camera) Details
     val pixelSize: String? = null,
     val cameraMake: String? = null,
     val cameraModel: String? = null,
@@ -30,7 +31,7 @@ data class GalleryItem(
     val focalLength: String? = null,
     val iso: String? = null,
 
-    // NEW LOCATION FIELDS
+    // Location and Source Details
     val photographer: String? = null,
     val locationName: String? = null,
     val locationCity: String? = null,
@@ -38,45 +39,46 @@ data class GalleryItem(
 )
 
 // =========================================================================
-// 2. NETWORK MODELS (DTOs): Used by Retrofit/Serialization (M4)
+// 2. NETWORK MODELS (DTOs) - For Retrofit and Kotlin Serialization
 // =========================================================================
 
 /**
- * Top-level response structure for the Unsplash API search endpoint.
+ * Maps the top-level JSON response structure from the Unsplash search API.
+ * This is specific to the third-party API integration required by the assignment.
  */
 @kotlinx.serialization.Serializable
 data class UnsplashResponse(
-    // Unsplash search API returns results in an array named 'results'
+    // The search results are contained within this list.
     val results: List<UnsplashPhotoDto>
 )
 
 /**
- * Data Transfer Object (DTO) for a single photo object returned by the API.
- * Includes nested DTOs for rich metadata.
+ * Data Transfer Object (DTO) for a single photo received directly from the Unsplash API.
+ * This network-specific model is used only for deserialization, not directly by the UI.
  */
 @kotlinx.serialization.Serializable
 data class UnsplashPhotoDto(
     val id: String,
     val description: String?,
     val urls: PhotoUrls,
-    val width: Int, // Used for pixel size calculation
-    val height: Int, // Used for pixel size calculation
-    val user: UserDto, // Needed for photographer name
-    val location: PhotoLocationDto? = null, // Optional location data
-    val exif: PhotoExifDto? = null // Optional EXIF camera data
+    val width: Int,
+    val height: Int,
+    val user: UserDto,
+    val location: PhotoLocationDto? = null,
+    val exif: PhotoExifDto? = null
 )
 
 /**
- * Nested structure to hold different image resolution links.
+ * Nested DTO for image URLs.
  */
 @kotlinx.serialization.Serializable
 data class PhotoUrls(
-    val regular: String, // Suitable for grid view
-    val full: String     // Suitable for detail view
+    val regular: String,
+    val full: String
 )
 
 /**
- * Nested structure for photographer details.
+ * Nested DTO for photographer information.
  */
 @kotlinx.serialization.Serializable
 data class UserDto(
@@ -84,31 +86,34 @@ data class UserDto(
 )
 
 /**
- * Nested structure for EXIF data.
+ * Nested DTO for EXIF camera data.
+ * @SerialName annotations map snake_case API fields to Kotlin's camelCase style.
  */
 @kotlinx.serialization.Serializable
 data class PhotoExifDto(
     val make: String? = null,
     val model: String? = null,
-    val exposure_time: String? = null,
+    @SerialName("exposure_time") // Maps API field to Kotlin property.
+    val exposureTime: String? = null,
     val aperture: String? = null,
-    val focal_length: String? = null,
+    @SerialName("focal_length") // Maps API field to Kotlin property.
+    val focalLength: String? = null,
     val iso: Int? = null
 )
 
 /**
- * Nested structure for Location data.
+ * Nested DTO for Location details.
  */
 @kotlinx.serialization.Serializable
 data class PhotoLocationDto(
     val name: String? = null,
     val city: String? = null,
     val country: String? = null,
-    val position: LocationPositionDto? = null // Location coordinates (optional)
+    val position: LocationPositionDto? = null
 )
 
 /**
- * Nested structure for Location coordinates (though unused in final GalleryItem, needed for DTO).
+ * Nested DTO for exact coordinates (unused in the final display).
  */
 @kotlinx.serialization.Serializable
 data class LocationPositionDto(
@@ -118,12 +123,12 @@ data class LocationPositionDto(
 
 
 // =========================================================================
-// 3. MAPPING: Converts DTO to Domain Model
+// 3. MAPPING: Conversion from DTO to Domain Model
 // =========================================================================
 
 /**
- * Converts a network-specific DTO into the clean domain-level GalleryItem,
- * mapping all nested metadata fields.
+ * Extension function used by the Repository to convert the network DTO into the clean,
+ * UI-ready domain model (GalleryItem). This fulfills the MVVM requirement for data mapping.
  */
 fun UnsplashPhotoDto.toGalleryItem(): GalleryItem {
     return GalleryItem(
@@ -131,21 +136,21 @@ fun UnsplashPhotoDto.toGalleryItem(): GalleryItem {
         regularUrl = this.urls.regular,
         fullUrl = this.urls.full,
         description = this.description,
-        isLocal = false,
+        isLocal = false, // Set to false since this is a network conversion.
 
-        // General
+        // General Info
         pixelSize = "${this.width}x${this.height}",
         photographer = this.user.name,
 
-        // EXIF Data (Using Elvis Operator for safe access)
+        // EXIF Data Mapping
         cameraMake = this.exif?.make,
         cameraModel = this.exif?.model,
-        exposureTime = this.exif?.exposure_time,
+        exposureTime = this.exif?.exposureTime,
         aperture = this.exif?.aperture,
-        focalLength = this.exif?.focal_length,
+        focalLength = this.exif?.focalLength,
         iso = this.exif?.iso?.toString(),
 
-        // Location Data
+        // Location Data Mapping
         locationName = this.location?.name,
         locationCity = this.location?.city,
         locationCountry = this.location?.country

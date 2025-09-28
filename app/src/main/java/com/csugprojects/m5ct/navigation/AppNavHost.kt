@@ -11,27 +11,27 @@ import com.csugprojects.m5ct.ui.screen.CameraScreen
 import com.csugprojects.m5ct.ui.screen.DetailScreen
 
 /**
- * Sets up the central navigation graph (NavHost) for the application.
- * This is where routes (from Routes.kt) are mapped to Composable screens (View layer).
+ * Sets up the central navigation graph using NavHost for the application.
+ * This file maps the defined Routes to the corresponding Composable screens (View Layer).
  */
 @Composable
 fun AppNavigation(viewModel: GalleryViewModel = viewModel()) {
-    // Instantiates the NavController, which manages the back stack and navigation state
+    // Manages the back stack and navigation state for the application.
     val navController = rememberNavController()
 
-    // Sets up the NavHost, starting at the main gallery screen
+    // Defines the navigation routes and the starting screen for the application.
     NavHost(
         navController = navController,
-        startDestination = Routes.GALLERY // <-- This line sets the initial screen
+        startDestination = Routes.GALLERY // The initial screen loaded when the app starts.
     ) {
 
-        // Route for the Main Gallery Grid (Home Screen)
+        // Route for the main photo grid screen.
         composable(Routes.GALLERY) {
-            // Passes the navController and the ViewModel to the screen
+            // Passes the navigation controller and the shared ViewModel to the screen.
             GalleryScreen(navController, viewModel)
         }
 
-        // Route for the Camera Capture Screen (M5 Multimedia)
+        // Route for the CameraX capture screen.
         composable(Routes.CAMERA) {
             CameraScreen(
                 navController = navController,
@@ -39,11 +39,9 @@ fun AppNavigation(viewModel: GalleryViewModel = viewModel()) {
             )
         }
 
-        // Route for the Single Photo Detail View
+        // Route for the single photo detail view.
         composable(Routes.DETAIL) {
             DetailScreen(navController, viewModel)
         }
-
-        // Note: Permission handling is managed outside this NavHost in MainActivity.kt
     }
 }

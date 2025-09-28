@@ -2,7 +2,7 @@ package com.csugprojects.m5ct.ui.screen
 
 import android.content.Context
 import android.net.Uri
-import androidx.camera.core.AspectRatio // NEW: Import AspectRatio for configuration
+import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -49,8 +49,7 @@ import java.util.Locale
 import java.util.concurrent.Executor
 import kotlin.coroutines.resume
 
-// --- 1. Camera Utility Functions ---
-
+// Utility function to get the required executor for CameraX operations.
 @Composable
 private fun rememberCameraExecutor(): Executor {
     val context = LocalContext.current
@@ -59,23 +58,24 @@ private fun rememberCameraExecutor(): Executor {
     }
 }
 
-// --- 2. Camera Screen Composable (M5 Multimedia - View Layer) ---
-
+/**
+ * The CameraScreen Composable (View Layer in MVVM).
+ * This implements the CameraX integration requirement for the assignment.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CameraScreen(navController: NavHostController, viewModel: GalleryViewModel) {
     val context = LocalContext.current
-    // FIX: Uses the correct lifecycle owner from the lifecycle-runtime-compose library
+    // Gets the current lifecycle owner for binding the camera.
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val cameraExecutor = rememberCameraExecutor()
-    val coroutineScope = rememberCoroutineScope() // The managed scope to be passed down
+    val coroutineScope = rememberCoroutineScope()
 
-    // FIX APPLIED: Add configuration for robust ImageCapture initialization
+    // Configures the ImageCapture use case for the camera.
+    @Suppress("DEPRECATION")
     val imageCapture = remember {
         ImageCapture.Builder()
-            // Guide CameraX to select an output resolution with a common aspect ratio
             .setTargetAspectRatio(AspectRatio.RATIO_4_3)
-            // Prioritize minimum latency over image quality for responsive capture
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .build()
     }
@@ -98,7 +98,7 @@ fun CameraScreen(navController: NavHostController, viewModel: GalleryViewModel) 
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // M5: AndroidView Integration for CameraX PreviewView
+            // Embeds the CameraX PreviewView into the Jetpack Compose layout.
             AndroidView(
                 factory = { ctx ->
                     val previewView = PreviewView(ctx)
@@ -114,26 +114,25 @@ fun CameraScreen(navController: NavHostController, viewModel: GalleryViewModel) 
                 modifier = Modifier.fillMaxSize()
             )
 
+            // Button to trigger the photo capture.
             FloatingActionButton(
                 onClick = {
                     if (!isCapturing.value) {
                         isCapturing.value = true
 
-                        coroutineScope.launch(Dispatchers.IO) { // 1. Start I/O on background thread
+                        // Launches the capture operation on a background thread.
+                        coroutineScope.launch(Dispatchers.IO) {
                             try {
-                                // FIX APPLIED: Pass the managed coroutineScope to the utility function
                                 val savedUri = takePhotoAndSave(context, cameraExecutor, imageCapture, viewModel, coroutineScope)
 
-                                // FIX APPLIED: Switch to the Main thread before updating the UI and navigating.
+                                // Switches back to the main thread for UI changes (navigation).
                                 withContext(Dispatchers.Main) {
                                     if (savedUri != null) {
-                                        // These lines safely execute on the Main Thread now
                                         viewModel.handleNewCapturedPhoto(savedUri)
-                                        navController.popBackStack() // CRASH AVOIDED
+                                        navController.popBackStack()
                                     }
                                 }
                             } finally {
-                                // Ensure loading state is reset, also preferably on Main
                                 withContext(Dispatchers.Main) {
                                     isCapturing.value = false
                                 }
@@ -146,6 +145,7 @@ fun CameraScreen(navController: NavHostController, viewModel: GalleryViewModel) 
                     .padding(32.dp),
                 containerColor = MaterialTheme.colorScheme.primary
             ) {
+                // Shows a loading spinner while processing the photo.
                 if (isCapturing.value) {
                     CircularProgressIndicator(
                         color = MaterialTheme.colorScheme.onPrimary,
@@ -159,10 +159,8 @@ fun CameraScreen(navController: NavHostController, viewModel: GalleryViewModel) 
     }
 }
 
-// --- 3. Core CameraX Binding and Capture I/O Logic (Non-Composable) ---
-
 /**
- * Binds CameraX Preview and ImageCapture use cases to the composable lifecycle.
+ * Binds the camera preview and capture use cases to the Android lifecycle owner.
  */
 private fun bindCameraUseCases(
     cameraProvider: ProcessCameraProvider,
@@ -192,12 +190,8 @@ private fun bindCameraUseCases(
 
 
 /**
- * Executes photo capture and handles file persistence via the Repository.
- *
- * FIX: Removed redundant Dispatchers.IO specification from the nested launch.
- * The inner repository call viewModel.repository.saveCapturedPhoto handles its own
- * context switching to Dispatchers.IO, making the outer specification unnecessary.
- * The nested launch remains to bridge the non-suspending CameraX callback to the suspend function.
+ * Suspends the coroutine until CameraX saves the picture, then delegates saving the file.
+ * The inner saving process is delegated to the Repository (Model Layer).
  */
 private suspend fun takePhotoAndSave(
     context: Context,
@@ -206,6 +200,7 @@ private suspend fun takePhotoAndSave(
     viewModel: GalleryViewModel,
     parentScope: CoroutineScope
 ): Uri? {
+    // Creates a temporary file to hold the raw image data immediately after capture.
     val photoFile = File(
         context.cacheDir,
         SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US).format(System.currentTimeMillis()) + ".jpg"
@@ -213,6 +208,7 @@ private suspend fun takePhotoAndSave(
 
     val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
 
+    // Uses suspendCancellableCoroutine to bridge the callback-based CameraX API with Kotlin coroutines.
     return suspendCancellableCoroutine { continuation ->
         imageCapture.takePicture(outputOptions, cameraExecutor, object : ImageCapture.OnImageSavedCallback {
 
@@ -224,17 +220,15 @@ private suspend fun takePhotoAndSave(
             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                 val displayName = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
 
-                // MODIFIED: Nested launch no longer specifies Dispatchers.IO
+                // Launches the file persistence operation.
                 parentScope.launch {
                     try {
-                        // 1. Delegate persistence (M3/M5 I/O) - saveCapturedPhoto uses withContext(Dispatchers.IO)
+                        // The Repository handles the complex file I/O and MediaStore updates.
                         val savedUri = viewModel.repository.saveCapturedPhoto(photoFile, displayName)
 
-                        // 2. Resume the outer coroutine with the final result
                         continuation.resume(savedUri)
                     } catch (e: Exception) {
                         println("Error saving image via Repository: ${e.message}")
-                        // Ensure temporary file is deleted if save failed
                         photoFile.delete()
                         continuation.resume(null)
                     }

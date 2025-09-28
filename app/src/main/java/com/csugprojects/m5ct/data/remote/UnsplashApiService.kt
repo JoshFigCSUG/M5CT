@@ -5,30 +5,30 @@ import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import retrofit2.Retrofit
 
-// Base URL for the Unsplash API
 private const val BASE_URL = "https://api.unsplash.com/"
 
 /**
- * Singleton object that creates and holds the concrete Retrofit service instance.
- * This is the actual implementation of the UnsplashApi interface (M4: Networking).
+ * Singleton service responsible for configuring and providing the Retrofit client.
+ * This object is part of the Model layer's remote data source implementation.
  */
 object UnsplashApiService {
 
-    // Configure the JSON parser for kotlinx.serialization
+    // Configures the JSON parser for kotlinx.serialization.
     private val json = Json {
-        ignoreUnknownKeys = true // Ignore fields in JSON not present in Kotlin data classes
+        // Allows the parser to safely skip any JSON fields not mapped in our Kotlin data classes (DTOs).
+        ignoreUnknownKeys = true
     }
 
-    // Build the Retrofit client instance
+    // Builds the Retrofit HTTP client.
     private val retrofit = Retrofit.Builder()
+        // Adds the serialization converter to handle JSON mapping automatically.
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
         .baseUrl(BASE_URL)
         .build()
 
     /**
-     * Public property to expose the concrete implementation of the UnsplashApi interface.
-     * This is what gets passed to the ImageRepository.
-     * Lazy initialization ensures the Retrofit object is only built when first accessed.
+     * Provides the concrete implementation of the UnsplashApi interface.
+     * The 'lazy' keyword ensures the Retrofit object is only constructed once upon first access.
      */
     val api: UnsplashApi by lazy {
         retrofit.create(UnsplashApi::class.java)

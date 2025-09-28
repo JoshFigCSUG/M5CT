@@ -10,7 +10,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -21,27 +20,25 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.csugprojects.m5ct.ui.viewmodel.GalleryViewModel
 import com.csugprojects.m5ct.data.model.GalleryItem
-import kotlinx.coroutines.launch
-import androidx.compose.runtime.LaunchedEffect // NEW IMPORT
-import kotlinx.coroutines.flow.collectLatest // NEW IMPORT
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.flow.collectLatest
 
-/**
- * Screen displaying the single selected image in full detail, including comprehensive metadata. (View Layer)
- */
+// This Composable is part of the View Layer in the MVVM architecture.
+// It displays a single image and its detailed metadata.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetailScreen(navController: NavHostController, viewModel: GalleryViewModel) {
 
-    // Observes the currently selected image from the ViewModel
+    // Observes the currently selected image from the ViewModel's state.
     val selectedImage by viewModel.selectedImage.collectAsState(initial = null)
     val scrollState = rememberScrollState()
-    // val coroutineScope = rememberCoroutineScope() // REMOVED
 
-    // NEW ROBUSTNESS: Use LaunchedEffect to observe the one-time deletion event
+    // Uses LaunchedEffect to observe the ViewModel for a successful photo deletion event.
+    // This handles navigation as a side effect outside of the button's onClick handler for safety.
     LaunchedEffect(key1 = true) {
         viewModel.deleteSuccess.collectLatest { success ->
             if (success) {
-                // Perform the navigation side-effect after the ViewModel signals completion
+                // Navigates back to the gallery upon successful deletion.
                 navController.popBackStack()
             }
         }
@@ -57,10 +54,10 @@ fun DetailScreen(navController: NavHostController, viewModel: GalleryViewModel) 
                     }
                 },
                 actions = {
-                    // Show delete button only if the image is local (app-owned)
+                    // Displays the delete button only if the photo is locally owned by the app.
                     if (selectedImage?.isLocal == true) {
                         IconButton(onClick = {
-                            // MODIFIED: Call the non-suspend function, which manages the coroutine internally
+                            // Triggers the deletion logic in the ViewModel (delegates the Model task).
                             viewModel.deleteSelectedPhoto()
                         }) {
                             Icon(Icons.Filled.Delete, contentDescription = "Delete Photo")
@@ -74,14 +71,15 @@ fun DetailScreen(navController: NavHostController, viewModel: GalleryViewModel) 
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(scrollState) // Makes the content scrollable
+                // Makes the content scrollable for adaptive UI design.
+                .verticalScroll(scrollState)
         ) {
             selectedImage?.let { item ->
-                // 1. Full Image Display Area
+                // Displays the high-resolution image using the Coil library.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 400.dp) // Constrain height on smaller screens
+                        .heightIn(max = 400.dp)
                         .padding(horizontal = 8.dp)
                 ) {
                     AsyncImage(
@@ -97,7 +95,7 @@ fun DetailScreen(navController: NavHostController, viewModel: GalleryViewModel) 
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // 2. Metadata Card (The Detail Information)
+                // Displays the metadata details card.
                 DetailsCard(item = item)
             } ?: Text(
                 "Image not found. Please select an image from the gallery.",
@@ -107,9 +105,7 @@ fun DetailScreen(navController: NavHostController, viewModel: GalleryViewModel) 
     }
 }
 
-/**
- * Custom Composable to display the structured photo metadata using a Material Card.
- */
+// Custom Composable to display the structured photo metadata.
 @Composable
 fun DetailsCard(item: GalleryItem) {
     Card(
@@ -120,7 +116,7 @@ fun DetailsCard(item: GalleryItem) {
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
 
-            // --- 1. GENERAL INFORMATION ---
+            // General Information Section
             Text(
                 "General Information",
                 style = MaterialTheme.typography.titleMedium,
@@ -131,7 +127,6 @@ fun DetailsCard(item: GalleryItem) {
             DetailsRow(label = "Photo ID", value = item.id)
             DetailsRow(label = "Description", value = item.description ?: "N/A")
 
-            // Photographer or Source
             val sourceValue = if (item.isLocal) "Local Device / CameraX" else item.photographer ?: "Unsplash Contributor"
             DetailsRow(label = if (item.isLocal) "Source" else "Photographer", value = sourceValue)
 
@@ -139,10 +134,9 @@ fun DetailsCard(item: GalleryItem) {
             DetailsRow(label = "File Size", value = item.fileSize ?: "N/A")
             DetailsRow(label = "Filename", value = item.filename ?: "N/A")
 
-            // --- 2. LOCATION ---
-            // Check if any location data exists before drawing the section
+            // Location Details Section
             if (item.locationName != null || item.locationCity != null || item.locationCountry != null) {
-                Divider(Modifier.padding(vertical = 12.dp))
+                HorizontalDivider(Modifier.padding(vertical = 12.dp))
                 Text(
                     "Location Details",
                     style = MaterialTheme.typography.titleMedium,
@@ -154,10 +148,9 @@ fun DetailsCard(item: GalleryItem) {
                 DetailsRow(label = "Country", value = item.locationCountry ?: "N/A")
             }
 
-            // --- 3. EXIF DATA (Camera Details) ---
-            // Check if any EXIF data exists before drawing the section
+            // Camera (EXIF) Details Section
             if (item.cameraModel != null || item.cameraMake != null || item.exposureTime != null) {
-                Divider(Modifier.padding(vertical = 12.dp))
+                HorizontalDivider(Modifier.padding(vertical = 12.dp))
                 Text(
                     "Camera (EXIF) Details",
                     style = MaterialTheme.typography.titleMedium,
@@ -175,10 +168,7 @@ fun DetailsCard(item: GalleryItem) {
     }
 }
 
-/**
- * Reusable Row for displaying a single label/value pair.
- * It intelligently hides the row if the value is "N/A".
- */
+// Reusable Composable for displaying a single label/value pair of metadata.
 @Composable
 fun DetailsRow(label: String, value: String) {
     if (value.isNotBlank() && value != "N/A") {

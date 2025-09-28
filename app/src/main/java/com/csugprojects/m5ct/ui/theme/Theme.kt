@@ -6,44 +6,47 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-// --- 1. Color Schemes (Based on the Material 3 standard) ---
-
+/**
+ * Defines the Dark Material 3 Color Scheme using the green palette.
+ */
 private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,      // Main interactive color
-    secondary = PurpleGrey80,  // Secondary container/element color
-    tertiary = Pink80,       // Accent color
-    background = BlackBase,    // Dark background for screens
-    surface = DarkGreySurface  // Dark background for cards/containers
-)
-
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40,
-    background = WhiteBase,
-    surface = WhiteSurface
+    primary = GreenDarkPrimary,
+    secondary = GreenDarkAccent,
+    tertiary = GreenLight,
+    background = BlackBase,
+    surface = DarkGreySurface,
+    onPrimary = Color.Black
 )
 
 /**
- * The main Composable function for the application's theme.
- * This should wrap your entire application UI in MainActivity.kt.
+ * Defines the Light Material 3 Color Scheme using the green palette.
+ */
+private val LightColorScheme = lightColorScheme(
+    primary = GreenPrimary,
+    secondary = GreenLight,
+    tertiary = GreenDarkAccent,
+    background = WhiteBase,
+    surface = GreenSurface,
+    onPrimary = Color.White
+)
+
+/**
+ * The main Composable function for applying the application's theme.
+ * This handles system synchronization (dark/light mode) and dynamic colors.
  */
 @Composable
 fun M5CTTheme(
-    // Default to system dark mode setting
     darkTheme: Boolean = isSystemInDarkTheme(),
-
-    // Enable dynamic color (Android 12+), which matches system wallpaper
     dynamicColor: Boolean = true,
-
     content: @Composable () -> Unit
 ) {
-    // Choose scheme based on settings and system availability
+    // Selects the appropriate color scheme based on user preference and device support.
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
@@ -53,23 +56,21 @@ fun M5CTTheme(
         else -> LightColorScheme
     }
 
-    // Status Bar color synchronization
+    // Ensures the Android status bar color matches the primary color of the theme.
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
+            @Suppress("DEPRECATION")
             window.statusBarColor = colorScheme.primary.toArgb()
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = darkTheme.not()
         }
     }
 
-    // Apply the Material Theme to the entire application
+    // Applies the final Material Theme configuration.
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = Typography, // Assume Typography.kt is defined
+        typography = Typography,
         content = content
     )
 }
-
-// NOTE: The separate Color.kt and Type.kt files defining the constants are omitted
-// but are required for the theme to fully compile and function.

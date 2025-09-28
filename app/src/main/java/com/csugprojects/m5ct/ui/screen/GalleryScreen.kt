@@ -1,4 +1,4 @@
-package com.csugprojects.m5ct.ui.screen // <--- CRITICAL: MUST be this package
+package com.csugprojects.m5ct.ui.screen
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -21,7 +21,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -43,7 +42,8 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 
 /**
- * The main screen of the application (View Layer), featuring the DockedSearchBar and image grid.
+ * The main screen of the application, serving as the View Layer in MVVM.
+ * It displays the photo grid and handles user interaction, delegating logic to the ViewModel.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @Composable
@@ -51,18 +51,20 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
+    // Observes the photo list, search query, and error messages from the ViewModel (State).
     val images by viewModel.images.collectAsState(initial = emptyList())
     val searchQuery by viewModel.searchQuery.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
 
-    // State to manage the search bar's active/expanded state
+    // State to manage the search bar's active (expanded) state.
     var isSearchActive by remember { mutableStateOf(false) }
 
-    // --- PHOTO PICKER LAUNCHER (Policy Compliant Import) ---
+    // Launcher for the Android system's Photo Picker.
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 10),
         onResult = { uris ->
             if (uris.isNotEmpty()) {
+                // Launches an I/O coroutine to copy selected photos to app storage.
                 coroutineScope.launch(Dispatchers.IO) {
                     val newItems = viewModel.processAndCopyPickerUris(context, uris)
                     withContext(Dispatchers.Main) {
@@ -73,28 +75,23 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
         }
     )
 
-    // Permission state for local storage access (only for reading/writing local files)
+    // Manages the state of permissions required for reading/writing local files.
     val storagePermissionState = rememberMultiplePermissionsState(
         permissions = STORAGE_PERMISSIONS
     )
 
-    // Permission state for Camera access
+    // Manages the state of permissions required for camera access.
     val cameraPermissionState = rememberMultiplePermissionsState(
         permissions = CAMERA_PERMISSIONS
     )
-
-    // REVERTED: Removed the LaunchedEffect that automatically launched the picker after permissions were granted.
-    // The user must now click the image button a second time after granting permission.
-
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Modern Photo Gallery") },
                 actions = {
-                    // 1. Button to launch the system Photo Picker (STORAGE PERMISSION CHECK)
+                    // Button to open the Photo Picker, checks for storage permissions first.
                     if (storagePermissionState.allPermissionsGranted) {
-                        // Permissions granted: Clicks launch the picker directly.
                         IconButton(onClick = {
                             photoPickerLauncher.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -103,7 +100,7 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
                             Icon(Icons.Filled.Image, contentDescription = "Select Local Images")
                         }
                     } else {
-                        // Permissions not granted: Button requests permissions.
+                        // Requests storage permissions, fulfilling the runtime permissions requirement.
                         IconButton(onClick = {
                             storagePermissionState.launchMultiplePermissionRequest()
                         }) {
@@ -111,12 +108,13 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
                         }
                     }
 
-                    // 2. Button to launch the CameraX screen (CAMERA PERMISSION CHECK)
+                    // Button to navigate to the CameraScreen.
                     if (cameraPermissionState.allPermissionsGranted) {
                         IconButton(onClick = { navController.navigate(Routes.CAMERA) }) {
                             Icon(Icons.Filled.Camera, contentDescription = "Open Camera (M5)")
                         }
                     } else {
+                        // Requests camera permissions, fulfilling the runtime permissions requirement.
                         IconButton(onClick = { cameraPermissionState.launchMultiplePermissionRequest() }) {
                             Icon(Icons.Filled.Camera, contentDescription = "Request Camera Permissions")
                         }
@@ -125,13 +123,13 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
             )
         }
     ) { padding ->
-        // Use a Column to hold the search bar and the main content list
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // DockedSearchBar implementation
+            // Implements the DockedSearchBar for searching the Unsplash API (network integration).
+            @Suppress("DEPRECATION")
             DockedSearchBar(
                 query = searchQuery,
                 onQueryChange = { viewModel.setSearchQuery(it) },
@@ -154,18 +152,15 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp)
             ) {
-                // Content of the expanded search (suggestions/history) can go here
+                // Content section for suggestions/history (currently empty).
             }
 
-            // Main Content: Lazy Grid
+            // Main Content: Handles displaying the grid or status messages.
             if (images.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     val message = when {
-                        // 1. Show Network/API Error if present
                         !errorMessage.isNullOrEmpty() -> errorMessage!!
-                        // 2. Show No Search Results (query is not blank, but images are empty)
                         searchQuery.isNotBlank() -> "No images found for \"$searchQuery\"."
-                        // 3. Initial/Empty State (If local images can't load without permission)
                         !storagePermissionState.allPermissionsGranted -> "Local images require storage permission. Loading network images..."
                         else -> "Loading random images or check connectivity."
                     }
@@ -175,6 +170,7 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
                     )
                 }
             } else {
+                // Uses an Adaptive Grid for responsive UI design across different screen sizes.
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 120.dp),
                     contentPadding = PaddingValues(4.dp),
@@ -184,6 +180,7 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
                 ) {
                     items(images, key = { it.id }) { item ->
                         GalleryGridItem(item) {
+                            // Handles user tap: selects the image and navigates to the detail screen.
                             viewModel.selectImage(item)
                             navController.navigate(Routes.DETAIL)
                         }
@@ -195,7 +192,7 @@ fun GalleryScreen(navController: NavHostController, viewModel: GalleryViewModel)
 }
 
 /**
- * Reusable Composable for a single image tile in the grid, encapsulating Coil loading.
+ * Reusable Composable for a single image tile in the gallery grid.
  */
 @Composable
 fun GalleryGridItem(item: GalleryItem, onClick: () -> Unit) {
@@ -206,7 +203,7 @@ fun GalleryGridItem(item: GalleryItem, onClick: () -> Unit) {
             .aspectRatio(1f)
             .clickable(onClick = onClick)
     ) {
-        // Coil integration for efficient loading
+        // Uses Coil's AsyncImage for efficient, asynchronous image loading and caching.
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(item.regularUrl)

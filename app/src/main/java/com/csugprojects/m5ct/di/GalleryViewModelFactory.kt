@@ -2,27 +2,29 @@ package com.csugprojects.m5ct.di
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import com.csugprojects.m5ct.data.repository.ImageRepository // Dependency
-import com.csugprojects.m5ct.ui.viewmodel.GalleryViewModel // ViewModel target
+import com.csugprojects.m5ct.data.repository.ImageRepository
+import com.csugprojects.m5ct.ui.viewmodel.GalleryViewModel
 
 /**
- * Custom Factory class (Manual Dependency Injection) for GalleryViewModel.
- * This pattern allows the Android system to correctly instantiate the ViewModel,
- * providing the required ImageRepository in its constructor.
+ * Custom Factory class required to manually inject the ImageRepository dependency into the ViewModel.
+ * This satisfies the Dependency Injection (DI) and MVVM architecture requirements.
  */
 class GalleryViewModelFactory(
     private val repository: ImageRepository
 ) : ViewModelProvider.Factory {
 
+    /**
+     * Creates and returns the requested ViewModel instance.
+     */
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        // Checks if the requested ViewModel class is the GalleryViewModel
+        // Checks if the requested class is the GalleryViewModel.
         if (modelClass.isAssignableFrom(GalleryViewModel::class.java)) {
-            // Instantiates the ViewModel, injecting the ImageRepository
+            // Instantiates the ViewModel, passing the necessary ImageRepository.
             @Suppress("UNCHECKED_CAST")
             return GalleryViewModel(repository) as T
         }
 
-        // Throws an error if the Factory is asked to create an unknown ViewModel
+        // Throws an error if an unhandled ViewModel class is requested.
         throw IllegalArgumentException("Unknown ViewModel class requested by Factory")
     }
 }

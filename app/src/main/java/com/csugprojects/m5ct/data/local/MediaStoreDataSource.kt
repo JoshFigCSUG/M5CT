@@ -20,46 +20,36 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.coroutines.cancellation.CancellationException
-import kotlinx.coroutines.ensureActive // NEW IMPORT
-import kotlin.coroutines.coroutineContext // Implicitly available in suspend functions
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
-/**
- * Handles all direct I/O interactions with the device's MediaStore (local storage).
- */
+// This class is the data source for local files (Model Layer in MVVM).
+// It handles all direct interaction with the Android MediaStore for persistence.
 class MediaStoreDataSource(private val context: Context) {
 
-    // Define the specific sub-folder where all app-owned media will live
+    // Defines the dedicated subfolder inside the Pictures directory for this app's photos.
     private val appMediaSubfolder = "/MyAppGallery"
 
-    // The relative path value used for MediaStore.RELATIVE_PATH (API 29+).
-    // Result: "MyAppGallery"
     private val scopedRelativePathValue = appMediaSubfolder.trimStart('/').trimEnd('/')
 
-    // CRITICAL FIX: Define the full canonical path including the standard directory and a trailing slash.
-    // This value, e.g., "Pictures/MyAppGallery/", must be used for all READ and WRITE operations (API 29+).
+    // Defines the full path used for modern (Q+) storage access.
     private val canonicalRelativePath = "${Environment.DIRECTORY_PICTURES}/${scopedRelativePathValue}/"
 
-    // Columns we want to retrieve from the MediaStore database
+    // Defines which columns (data fields) to retrieve when querying the MediaStore database.
     private val projection = arrayOf(
         MediaStore.Images.Media._ID,
         MediaStore.Images.Media.DISPLAY_NAME,
         MediaStore.Images.Media.DATE_TAKEN,
-        MediaStore.MediaColumns.RELATIVE_PATH, // API 29+
-        MediaStore.MediaColumns.DATA // API < 29
+        MediaStore.MediaColumns.RELATIVE_PATH, // For modern Android (API 29+)
+        MediaStore.MediaColumns.DATA // For legacy Android (API < 29)
     )
 
-    // ====================================================================
-    // 1. READ: Fetching App-Owned Images (With Robust Error Handling)
-    // ====================================================================
-
-    /**
-     * Queries MediaStore specifically for images created/owned by this app,
-     * skipping any entries that appear corrupted or inaccessible.
-     */
+    // Function to fetch all photos created and owned by this application.
+    // This supports the core Gallery feature of the assignment.
     fun getLocalImages(): List<GalleryItem> {
         val imageList = mutableListOf<GalleryItem>()
 
-        // Determine the correct collection URI based on API level
+        // Chooses the correct storage location URI based on the device's Android version.
         val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         } else {
@@ -72,16 +62,13 @@ class MediaStoreDataSource(private val context: Context) {
         val selection: String?
         val selectionArgs: Array<String>?
 
+        // Uses the appropriate filtering method based on the Android version (Scoped Storage vs. Legacy).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // API 29+ (Q and above): Filter by RELATIVE_PATH
             selection = "${MediaStore.Images.Media.RELATIVE_PATH}=?"
-            // CRITICAL FIX: Use the consistent, canonical path with trailing slash for querying.
             selectionArgs = arrayOf(canonicalRelativePath)
         } else {
-            // API < 29 (Legacy): Filter by DATA path prefix
             @Suppress("DEPRECATION")
             val legacyDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
-            // Use scopedRelativePathValue here as File() handles the slashes correctly
             val fullLegacyPath = File(legacyDir, scopedRelativePathValue).absolutePath
 
             selection = "${MediaStore.Images.Media.DATA} LIKE ?"
@@ -90,6 +77,7 @@ class MediaStoreDataSource(private val context: Context) {
 
 
         try {
+            // Executes the database query and processes the results one by one.
             context.contentResolver.query(
                 collection,
                 projection,
@@ -106,7 +94,7 @@ class MediaStoreDataSource(private val context: Context) {
                         val name = cursor.getString(nameColumn)
                         val contentUri = ContentUris.withAppendedId(collection, id)
 
-                        // NEW: Validate the URI exists and is accessible before adding
+                        // Only adds the image if its URI can actually be accessed (checks for corruption/permission issues).
                         if (isUriAccessible(contentUri)) {
                             imageList.add(
                                 GalleryItem(
@@ -121,7 +109,6 @@ class MediaStoreDataSource(private val context: Context) {
                             println("Skipping inaccessible image entry: $contentUri")
                         }
                     } catch (e: Exception) {
-                        // Skip corrupted entries, preventing a crash on bad data
                         println("Skipping corrupted image entry: ${e.message}")
                     }
                 }
@@ -132,13 +119,8 @@ class MediaStoreDataSource(private val context: Context) {
         return imageList
     }
 
-    // ====================================================================
-    // 2. CREATE (Photo Picker Copy)
-    // ====================================================================
-
-    /**
-     * Delegates to the correct save logic based on the API level.
-     */
+    // Suspends the coroutine while copying a photo picked from the system's Photo Picker.
+    // This runs on a background I/O thread.
     suspend fun copyPhotoToAppStorage(context: Context, sourceUri: Uri): Uri? = withContext(Dispatchers.IO) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -147,6 +129,7 @@ class MediaStoreDataSource(private val context: Context) {
                 return@withContext copyPhotoToAppStorageLegacy(context, sourceUri)
             }
         } catch (e: CancellationException) {
+            // Re-throws cancellation exceptions, a coroutine best practice.
             throw e
         } catch (e: Exception) {
             println("Error copying photo to app storage: ${e.message}")
@@ -154,10 +137,6 @@ class MediaStoreDataSource(private val context: Context) {
         }
     }
 
-    /**
-     * [API Q+] Reads data from the Photo Picker source URI and saves it as a new, app-owned file.
-     * ROBUSTNESS FIX: Stream copy loop added to enable coroutine cancellation mid-transfer.
-     */
     @RequiresApi(Build.VERSION_CODES.Q)
     private suspend fun copyPhotoToAppStorageQPlus(context: Context, sourceUri: Uri): Uri? {
         val resolver = context.contentResolver
@@ -165,13 +144,11 @@ class MediaStoreDataSource(private val context: Context) {
         var newUri: Uri? = null
 
         try {
-            // 1. Create PENDING MediaStore entry
             val contentValues = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
                 put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                // CRITICAL FIX: Use the consistent, canonical path with trailing slash for writing.
                 put(MediaStore.MediaColumns.RELATIVE_PATH, canonicalRelativePath)
-                put(MediaStore.Images.Media.IS_PENDING, 1) // Mark as pending
+                put(MediaStore.Images.Media.IS_PENDING, 1) // Marks the file as pending while data is written.
             }
 
             newUri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), contentValues)
@@ -180,10 +157,10 @@ class MediaStoreDataSource(private val context: Context) {
                 throw IOException("Failed to create new MediaStore record for copy.")
             }
 
-            // 2. Copy the data stream
+            // Streams data from the source URI to the new MediaStore entry.
             resolver.openInputStream(sourceUri)?.use { inputStream ->
                 resolver.openOutputStream(newUri)?.use { outputStream ->
-                    // ROBUSTNESS FIX: Cancellable I/O loop
+                    // Uses a cancellable loop for robust I/O handling, stopping if the coroutine is cancelled.
                     val buffer = ByteArray(8192)
                     var read: Int
                     while (coroutineContext.ensureActive().let { read = inputStream.read(buffer); read >= 0 }) {
@@ -192,7 +169,7 @@ class MediaStoreDataSource(private val context: Context) {
                 } ?: throw IOException("Failed to open output stream for MediaStore URI.")
             } ?: throw IOException("Failed to open input stream from source URI.")
 
-            // 3. Clear PENDING status (makes the file visible)
+            // Clears the pending flag to make the new image visible in the gallery.
             contentValues.clear()
             contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
             resolver.update(newUri, contentValues, null, null)
@@ -201,52 +178,45 @@ class MediaStoreDataSource(private val context: Context) {
 
         } catch (e: Exception) {
             println("Error in Q+ photo copy: ${e.message}")
-            if (newUri != null) resolver.delete(newUri, null, null)
+            if (newUri != null) resolver.delete(newUri, null, null) // Cleans up incomplete entry.
             return null
         }
     }
 
-    /**
-     * [API < Q] Reads data from the Photo Picker source URI and saves it using the legacy
-     * file path (DATA column) method.
-     * ROBUSTNESS FIX: Stream copy loop added to enable coroutine cancellation mid-transfer.
-     */
     @Suppress("DEPRECATION")
     private suspend fun copyPhotoToAppStorageLegacy(context: Context, sourceUri: Uri): Uri? {
         val resolver = context.contentResolver
         val displayName = "IMP_${SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())}.jpg"
 
-        // 1. Get the target directory and file path
         val legacyDir = getLegacySaveDir()
         val targetFile = File(legacyDir, displayName)
         val targetFilePath = targetFile.absolutePath
 
-        // 2. Stream data from the Photo Picker source URI to the new local file
+        // Streams data directly to a local file path.
         resolver.openInputStream(sourceUri)?.use { inputStream ->
             FileOutputStream(targetFile).use { outputStream ->
-                // ROBUSTNESS FIX: Cancellable I/O loop
+                // Uses a cancellable loop for robust I/O handling.
                 val buffer = ByteArray(8192)
                 var read: Int
                 while (coroutineContext.ensureActive().let { read = inputStream.read(buffer); read >= 0 }) {
                     outputStream.write(buffer, 0, read)
                 }
             }
-        } ?: return null // Failed to open input stream
+        } ?: return null
 
-        // 3. Insert the new record into MediaStore (using DATA column)
+        // Inserts the file path into MediaStore to make it visible.
         val contentValues = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            put(MediaStore.MediaColumns.DATA, targetFilePath) // CRITICAL: Legacy path
+            put(MediaStore.MediaColumns.DATA, targetFilePath)
             put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
             put(MediaStore.Images.Media.SIZE, targetFile.length())
-            // NEW: Explicitly set BUCKET_DISPLAY_NAME for better legacy indexing (Fixes initial deletion crash)
             put(MediaStore.Images.Media.BUCKET_DISPLAY_NAME, scopedRelativePathValue)
         }
 
         val newUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
 
-        // NEW: Explicitly trigger the Media Scanner for legacy devices (Fixes initial load delay)
+        // Broadcasts an intent to update the gallery immediately on older devices.
         if (newUri != null) {
             context.sendBroadcast(
                 Intent(
@@ -259,22 +229,15 @@ class MediaStoreDataSource(private val context: Context) {
         return newUri
     }
 
-    // ====================================================================
-    // 3. CREATE (CameraX): Saving a new capture file
-    // ====================================================================
-
-    /**
-     * Saves a temporary CameraX photo file to the external storage via MediaStore.
-     * Ensures the temporary file is deleted after successful persistence.
-     * ROBUSTNESS FIX: Stream copy loop added to enable coroutine cancellation mid-transfer.
-     */
+    @Suppress("DEPRECATION")
+    // Saves a photo captured using the CameraX feature.
     suspend fun savePhotoToMediaStore(photoFile: File, displayName: String): Uri? = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
         val mimeType = "image/jpeg"
         var imageUri: Uri? = null
         val isQPlus = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
-        // Determine the collection and file info
+        // Determines the correct content URI for saving.
         val imageCollection = if (isQPlus) {
             MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         } else {
@@ -282,7 +245,6 @@ class MediaStoreDataSource(private val context: Context) {
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         }
 
-        // Determine the final permanent path for legacy mode
         @Suppress("DEPRECATION")
         val targetFile: File? = if (!isQPlus) {
             val legacyDir = getLegacySaveDir()
@@ -290,7 +252,7 @@ class MediaStoreDataSource(private val context: Context) {
         } else null
 
         try {
-            // 1. Prepare ContentValues
+            // Creates the MediaStore entry, setting metadata and handling API differences.
             val contentValues = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
                 put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
@@ -298,14 +260,10 @@ class MediaStoreDataSource(private val context: Context) {
                 put(MediaStore.Images.Media.SIZE, photoFile.length())
 
                 if (isQPlus) {
-                    // Q+: Set relative path and mark as pending
-                    // CRITICAL FIX: Use the consistent, canonical path with trailing slash for writing.
                     put(MediaStore.Images.Media.RELATIVE_PATH, canonicalRelativePath)
                     put(MediaStore.Images.Media.IS_PENDING, 1)
                 } else {
-                    // Legacy: Use the absolute path of the final destination file
                     put(MediaStore.Images.Media.DATA, targetFile!!.absolutePath)
-                    // Ensure legacy files are properly indexed
                     put(MediaStore.Images.Media.BUCKET_DISPLAY_NAME, scopedRelativePathValue)
                 }
             }
@@ -316,12 +274,11 @@ class MediaStoreDataSource(private val context: Context) {
                 throw IOException("Failed to create new MediaStore record.")
             }
 
-            // 2. Perform file copy/streaming
+            // Handles the physical file write operation.
             if (isQPlus) {
-                // Q+: Stream from the temporary file to the MediaStore URI
                 resolver.openOutputStream(imageUri)?.use { outputStream ->
                     FileInputStream(photoFile).use { inputStream ->
-                        // ROBUSTNESS FIX: Cancellable I/O loop
+                        // Uses a cancellable I/O loop for robust file transfer.
                         val buffer = ByteArray(8192)
                         var read: Int
                         while (coroutineContext.ensureActive().let { read = inputStream.read(buffer); read >= 0 }) {
@@ -330,15 +287,15 @@ class MediaStoreDataSource(private val context: Context) {
                     }
                 }
 
-                // CRITICAL: Clear PENDING status
+                // Marks the file as complete for modern devices.
                 contentValues.clear()
                 contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
                 resolver.update(imageUri, contentValues, null, null)
 
             } else {
-                // Legacy: Copy temp cache file to permanent storage location
+                // Copies the temporary file to the final public path for legacy devices.
                 photoFile.copyTo(targetFile!!, overwrite = true)
-                // Ensure media scanner runs after file copy on legacy devices
+                // Notifies the system to scan the new file.
                 context.sendBroadcast(
                     Intent(
                         Intent.ACTION_MEDIA_SCANNER_SCAN_FILE,
@@ -347,13 +304,13 @@ class MediaStoreDataSource(private val context: Context) {
                 )
             }
 
-            // 3. Clean up the temporary CameraX file
+            // Deletes the temporary CameraX file after saving.
             if (photoFile.exists()) photoFile.delete()
 
             return@withContext imageUri
         } catch (e: Exception) {
             println("Error saving captured photo: ${e.message}")
-            // Clean up: delete the incomplete MediaStore entry and the temp/target files
+            // Cleans up any incomplete files or MediaStore entries on failure.
             if (imageUri != null) resolver.delete(imageUri, null, null)
             if (photoFile.exists()) photoFile.delete()
             targetFile?.delete()
@@ -361,20 +318,12 @@ class MediaStoreDataSource(private val context: Context) {
         }
     }
 
-
-    // ====================================================================
-    // 4. DELETE: Deleting an app-owned file (Enhanced Error Handling)
-    // ====================================================================
-
-    /**
-     * Deletes a photo from the device's shared storage using its Content URI.
-     * Includes error handling to prevent application crashes.
-     */
+    // Deletes an app-owned photo from the device's shared storage.
     fun deletePhotoFromMediaStore(uri: Uri): Boolean {
         println("Attempting to delete: $uri")
 
         try {
-            // NEW: First verify the URI is valid and accessible before attempting deletion
+            // Checks if the URI is valid before attempting deletion.
             if (!isUriAccessible(uri)) {
                 println("URI not accessible for deletion, treating as already deleted or corrupted: $uri")
                 return false
@@ -392,44 +341,31 @@ class MediaStoreDataSource(private val context: Context) {
             println("Permission denied for deletion, check app permissions: $uri - ${e.message}")
             return false
         } catch (e: Exception) {
-            // Catching general exceptions that might occur due to MediaStore corruption
             println("Error deleting image: $uri - ${e.message}")
             e.printStackTrace()
             return false
         }
     }
 
-
-    // ====================================================================
-    // 5. HELPER FUNCTIONS
-    // ====================================================================
-
-    /**
-     * Helper to get the absolute path to the app's dedicated media folder for API < 29.
-     * Also ensures the directory exists.
-     */
+    // Helper function to get the correct save directory for older Android versions (pre-Q).
     @Suppress("DEPRECATION")
     private fun getLegacySaveDir(): File {
-        // Use DIRECTORY_PICTURES in the external public storage
         val picDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
-        // Use the subfolder name
         val finalDir = File(picDir, scopedRelativePathValue)
 
-        // Create the directory if it doesn't exist (critical for pre-Q)
+        // Ensures the directory structure exists.
         if (!finalDir.exists()) {
             finalDir.mkdirs()
         }
         return finalDir
     }
 
-    /**
-     * NEW: Checks if a given Content URI is accessible (can be opened for reading).
-     * Used to filter out corrupted or inaccessible MediaStore entries.
-     */
+    // Helper function to verify that a content URI points to an accessible file.
     private fun isUriAccessible(uri: Uri): Boolean {
         return try {
+            // Attempts to open an input stream; success means the URI is valid.
             context.contentResolver.openInputStream(uri)?.use { true } ?: false
-        } catch (e: Exception) {
+        } catch (_: Exception) { // Catches exceptions if the file is corrupted or permissions are missing.
             false
         }
     }

@@ -1,3 +1,6 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+// Defines all plugins required for the Android application, Kotlin, Compose, and Kotlin Serialization.
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -7,12 +10,12 @@ plugins {
 
 android {
     namespace = "com.csugprojects.m5ct"
-    compileSdk = 36 // Already set to 36
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.csugprojects.m5ct"
         minSdk = 24
-        targetSdk = 36 // Already set to 36
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
 
@@ -29,22 +32,29 @@ android {
         }
     }
 
-    // CRITICAL FIX: Update to Java 17 for API 36 compatibility
+    // Configures the Java compiler to use Java 17 for modern Android requirements.
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17 // Updated from 11
-        targetCompatibility = JavaVersion.VERSION_17 // Updated from 11
-    }
-    kotlinOptions {
-        jvmTarget = "17" // Updated from 11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // Configures the Kotlin compiler to target JVM 17.
+    kotlin {
+        compilerOptions {
+            jvmTarget = JvmTarget.JVM_17
+        }
+    }
+
+    // Enables Jetpack Compose features for the UI (View Layer).
     buildFeatures {
         compose = true
     }
 }
 
+// Defines all external library dependencies required by the project.
 dependencies {
 
+    // Base Android and Compose dependencies.
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -62,38 +72,28 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
-    // M5: Image Loading and Caching (Coil)
+
+    // Image Loading: Coil is used for efficient asynchronous image loading and caching (M5 requirement).
     implementation(libs.coil.compose)
 
-    // M5: Multimedia Integration (CameraX)
-    // CameraX core library using the camera2 implementation
-    val camerax_version = "1.5.0"
-    // The following line is optional, as the core library is included indirectly by camera-camera2
+    // Multimedia: CameraX libraries are used for photo capture (M5 requirement).
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
-    //
-    // If you want to additionally use the CameraX Lifecycle library
     implementation(libs.androidx.camera.lifecycle)
-    // If you want to additionally use the CameraX VideoCapture library
     implementation(libs.androidx.camera.video)
-    // If you want to additionally use the CameraX View class
     implementation(libs.androidx.camera.view)
-    // If you want to additionally add CameraX ML Kit Vision Integration
     implementation(libs.androidx.camera.mlkit.vision)
-    // If you want to additionally use the CameraX Extensions library
     implementation(libs.androidx.camera.extensions)
 
-    // M4: Networking (Retrofit and Serialization for Unsplash API)
+    // Networking/Serialization: Retrofit and Kotlin Serialization for Unsplash API integration (M4 requirement).
+    implementation(libs.retrofit)
+    implementation(libs.retrofit2.kotlinx.serialization.converter)
+    implementation(libs.kotlinx.serialization.json)
 
-    // Updated to use the modern libs convention for cleaner version management
-    implementation(libs.retrofit) // Core Retrofit library (Alias assumed: retrofit.core)
-    implementation(libs.retrofit2.kotlinx.serialization.converter) // Converter
-    implementation(libs.kotlinx.serialization.json) // JSON runtime
-
-    // M5: Permissions Handling (Accompanist)
+    // Permissions: Accompanist is used for robust runtime permission handling (M5 requirement).
     implementation(libs.accompanist.permissions)
 
-    // Compose Navigation
+    // Navigation: Compose Navigation handles all screen transitions.
     implementation(libs.androidx.navigation.compose)
 
 }

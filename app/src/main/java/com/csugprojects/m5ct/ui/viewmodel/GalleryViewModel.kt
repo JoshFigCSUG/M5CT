@@ -1,5 +1,3 @@
-// app/src/main/java/com/csugprojects/m5ct/ui/viewmodel/GalleryViewModel.kt
-
 package com.csugprojects.m5ct.ui.viewmodel
 
 import android.content.Context
@@ -21,36 +19,38 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow // NEW IMPORT
-import kotlinx.coroutines.flow.SharedFlow // NEW IMPORT
-import kotlinx.coroutines.flow.asSharedFlow // NEW IMPORT
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 /**
- * Manages the UI-related data and state for the main photo gallery screen,
- * including handling dynamic search queries and background I/O.
+ * Manages the UI-related data and state for the main photo gallery screen.
+ * This class serves as the ViewModel in the MVVM architecture.
  */
 @OptIn(FlowPreview::class)
 class GalleryViewModel(
-    val repository: ImageRepository // Public for CameraScreen I/O delegation
+    val repository: ImageRepository // The ImageRepository is injected, fulfilling the MVVM and DI requirements.
 ) : ViewModel() {
 
     private val _images = MutableStateFlow<List<GalleryItem>>(emptyList())
-    val images: StateFlow<List<GalleryItem>> = _images.asStateFlow()
+    val images: StateFlow<List<GalleryItem>> = _images.asStateFlow() // Exposes the list of images as a StateFlow for the UI to observe.
 
     private val _selectedImage = MutableStateFlow<GalleryItem?>(null)
-    val selectedImage: StateFlow<GalleryItem?> = _selectedImage.asStateFlow()
+    val selectedImage: StateFlow<GalleryItem?> = _selectedImage.asStateFlow() // Exposes the currently selected image for the DetailScreen.
 
     private val _searchQuery = MutableStateFlow("")
-    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow() // Holds the user's search input.
 
     private val _errorMessage = MutableStateFlow<String?>(null)
-    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow() // Holds network or data loading error messages.
 
-    // NEW: SharedFlow for one-time events, such as signaling successful deletion
+    // SharedFlow for one-time events, signaling successful deletion to trigger navigation.
     private val _deleteSuccess = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
     val deleteSuccess: SharedFlow<Boolean> = _deleteSuccess.asSharedFlow()
 
     init {
+        // Sets up a search flow that debounces input and filters short queries.
+        // This optimizes performance by limiting unnecessary network calls.
         _searchQuery
             .debounce(300L)
             .filter { query ->
@@ -61,13 +61,14 @@ class GalleryViewModel(
     }
 
     /**
-     * Function to handle fetching both local and remote (search) images.
+     * Triggers the ImageRepository to fetch data, supporting both local and remote (search/random) loading.
      */
     fun loadImages(query: String) {
         viewModelScope.launch {
             try {
                 _errorMessage.value = null
 
+                // Collects the flow, receiving local images first, then the combined list.
                 repository.getGalleryItems(query).collect { combinedList ->
                     _images.value = combinedList
                 }
@@ -82,7 +83,7 @@ class GalleryViewModel(
     }
 
     /**
-     * NEW: Performs a local image refresh with retries to account for MediaStore indexing delays.
+     * Refreshes the local image list with retries to account for MediaStore indexing delays.
      */
     fun refreshLocalImagesAfterImport() {
         viewModelScope.launch {
@@ -98,14 +99,12 @@ class GalleryViewModel(
                     }
                 } catch (e: Exception) {
                     println("Error during image refresh: ${e.message}. Retrying...")
-                    // Only display final error if retries fail
                     if (retryCount == maxRetries - 1) {
                         _errorMessage.value = "Failed to load newly imported photos after multiple retries."
                     }
                 }
 
                 if (!imagesLoaded) {
-                    // Wait 500ms before retrying
                     delay(500L)
                     retryCount++
                 }
@@ -113,14 +112,24 @@ class GalleryViewModel(
         }
     }
 
+    /**
+     * Sets the image currently selected by the user.
+     */
     fun selectImage(item: GalleryItem) {
         _selectedImage.value = item
     }
 
+    /**
+     * Updates the search query input from the UI.
+     */
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
     }
 
+    /**
+     * Processes URIs from the Photo Picker, copies them to app storage via the Repository,
+     * and returns the new GalleryItems. Runs on the I/O dispatcher.
+     */
     suspend fun processAndCopyPickerUris(context: Context, uris: List<Uri>): List<GalleryItem> {
         val copiedItems = mutableListOf<GalleryItem>()
 
@@ -137,22 +146,29 @@ class GalleryViewModel(
         return copiedItems
     }
 
+    /**
+     * Handles the successful completion of a photo capture operation.
+     */
+    @Suppress("UNUSED_PARAMETER") // Suppresses the warning for the unused parameter.
     fun handleNewCapturedPhoto(photoUri: Uri) {
-        // Use the robust refresh function
-        refreshLocalImagesAfterImport()
-    }
-
-    fun handleNewPhotoPickerUris(newItems: List<GalleryItem>) {
-        // Use the robust refresh function
+        // Triggers a list refresh to ensure the newly saved photo appears in the gallery.
         refreshLocalImagesAfterImport()
     }
 
     /**
-     * MODIFIED: Launches deletion via viewModelScope and signals success via SharedFlow.
-     * The Composable will observe the flow for navigation.
+     * Handles the completion of importing photos from the picker.
+     */
+    @Suppress("UNUSED_PARAMETER") // Suppresses the warning for the unused parameter.
+    fun handleNewPhotoPickerUris(newItems: List<GalleryItem>) {
+        // Triggers a list refresh to ensure the newly imported photos appear in the gallery.
+        refreshLocalImagesAfterImport()
+    }
+
+    /**
+     * Deletes the currently selected local photo and emits a success signal upon completion.
      */
     fun deleteSelectedPhoto() {
-        // Use viewModelScope to launch the coroutine tied to the ViewModel's lifecycle
+        // Uses viewModelScope to tie the deletion process to the ViewModel's lifecycle.
         viewModelScope.launch {
             val photoToDelete = _selectedImage.value ?: return@launch
             if (photoToDelete.isLocal && photoToDelete.regularUrl.startsWith("content://")) {
@@ -162,7 +178,7 @@ class GalleryViewModel(
                 if (success) {
                     loadImages(_searchQuery.value)
                     _selectedImage.value = null
-                    _deleteSuccess.emit(true) // SIGNAL SUCCESS
+                    _deleteSuccess.emit(true) // Signals the UI (DetailScreen) to navigate away.
                 } else {
                     println("Deletion failed for local photo: ${photoToDelete.id}.")
                 }
